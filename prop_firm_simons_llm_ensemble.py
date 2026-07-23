@@ -239,7 +239,9 @@ def run_simons_llm_ensemble_engine():
             if atr < 1.0:
                 atr = 2.0
                 
-            # Simons Volatility Sizing
+            # ---------------------------------------------------------
+            # MASTER SECRET: COMPOUND FRACTIONAL KELLY SIZING
+            # ---------------------------------------------------------
             vol_scaler = min(1.3, max(0.7, 0.00002 / (r_vol + 1e-8)))
             base_risk_pct = 0.010 * confidence * vol_scaler
             
