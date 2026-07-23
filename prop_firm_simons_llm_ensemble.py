@@ -114,9 +114,10 @@ def run_simons_llm_ensemble_engine():
     df = df.sort_values('timestamp').reset_index(drop=True)
     
     last_time = df['timestamp'].max()
-    start_time = last_time - pd.Timedelta(days=30)
+    end_time = last_time - pd.Timedelta(days=30)
+    start_time = last_time - pd.Timedelta(days=60) # May Period
     
-    df_sliced = df[df['timestamp'] >= start_time - pd.Timedelta(days=5)].copy().reset_index(drop=True)
+    df_sliced = df[(df['timestamp'] >= start_time - pd.Timedelta(days=5)) & (df['timestamp'] <= end_time)].copy().reset_index(drop=True)
     start_bar_indices = df_sliced[df_sliced['timestamp'] >= start_time].index.tolist()
     start_idx = start_bar_indices[0]
     
@@ -242,9 +243,8 @@ def run_simons_llm_ensemble_engine():
             # ---------------------------------------------------------
             # MASTER SECRET: COMPOUND FRACTIONAL KELLY SIZING
             # ---------------------------------------------------------
-            # Simons Volatility Sizing (0.80% Base Risk for Ultra-Low Drawdown)
             vol_scaler = min(1.3, max(0.7, 0.00002 / (r_vol + 1e-8)))
-            base_risk_pct = 0.0080 * confidence * vol_scaler
+            base_risk_pct = 0.010 * confidence * vol_scaler
             
             cash_risk = current_balance * base_risk_pct
             
@@ -303,7 +303,7 @@ def run_simons_llm_ensemble_engine():
             
             spread_cost = (df_sliced.loc[entry_idx, 'spread'] / entry_price) * position_usd
             commission_cost = 2 * commission * position_usd
-            total_costs = (spread_cost + commission_cost) / 2.0
+            total_costs = spread_cost + commission_cost
             
             if decision == 'BUY':
                 raw_profit = units * (exit_price - entry_price)
@@ -373,7 +373,7 @@ def run_simons_llm_ensemble_engine():
     max_total_dd = equity_history['drawdown'].max()
     
     print("\n=======================================================")
-    print("   MULTI-REGIME SIMONS + DEEPSEEK QUANT SUMMARY (June)")
+    print("   MULTI-REGIME SIMONS + DEEPSEEK QUANT SUMMARY (MAY)")
     print("=======================================================")
     print(f" Starting Balance       : ${start_balance:,.2f}")
     print(f" Final Balance          : ${current_balance:,.2f}")
