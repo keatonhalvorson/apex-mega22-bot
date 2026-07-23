@@ -46,7 +46,7 @@ def fetch_decision_institutional(api_key, df_slice, current_bar_idx, ml_model):
         'gold_dxy_corr_20', 'gold_bond_corr_20', 'vol_ratio_5_20',
         'z_score', 'rsi_14', 'h_ema_20', 'h_rsi_14',
         'gold_ofi_accel_5', 'quote_imbalance_velocity_5', 'price_impact_coef_5', 'vwap_dev_20',
-        'hft_abs_bull', 'hft_abs_bear'
+        'hft_abs_bull', 'hft_abs_bear', 'macro_residual_z_20'
     ]
     
     current_features = context_bars[feature_cols].copy()
@@ -61,7 +61,7 @@ def fetch_decision_institutional(api_key, df_slice, current_bar_idx, ml_model):
     abs_bear = float(last_bar['hft_abs_bear'])
     vol_rat = float(last_bar['vol_ratio_5_20'])
     price_elasticity = float(last_bar['price_impact_coef_5'])
-    dxy_ret_3 = float(last_bar['dxy_ret_3'])
+    macro_res_z = float(last_bar['macro_residual_z_20'])
     
     has_ml_signal = abs(ml_pred) > 0.0003
     has_hft_signal = (abs_bull > 0.20) or (abs_bear > 0.20)
@@ -102,38 +102,9 @@ def fetch_decision_institutional(api_key, df_slice, current_bar_idx, ml_model):
             "reasoning": "Blocked by Quant Filter: High Price Impact Elasticity (Thin Liquidity Trap)."
         }
         
-    # QUANT FILTER B: Macro Residual Divergence Vector
-    # If ML predicts BUY Gold, but DXY is surging strongly (+0.15%), macro divergence ruins edge.
-    if ml_pred > 0.0003 and dxy_ret_3 > 0.0015:
-        return {
-            "bar_idx": current_bar_idx,
-            "timestamp": str(timestamp),
-            "close": close_price,
-            "spread": spread_entry,
-            "atr": atr_val,
-            "ml_pred_return": ml_pred,
-            "decision": "HOLD",
-            "confidence": 0.0,
-            "trade_mode": "HOLD",
-            "stop_loss_atr": 1.5,
-            "take_profit_atr": 3.0,
-            "reasoning": "Blocked by Quant Filter: Macro Cointegration Divergence (Gold vs USD Surging)."
-        }
-    if ml_pred < -0.0003 and dxy_ret_3 < -0.0015:
-        return {
-            "bar_idx": current_bar_idx,
-            "timestamp": str(timestamp),
-            "close": close_price,
-            "spread": spread_entry,
-            "atr": atr_val,
-            "ml_pred_return": ml_pred,
-            "decision": "HOLD",
-            "confidence": 0.0,
-            "trade_mode": "HOLD",
-            "stop_loss_atr": 1.5,
-            "take_profit_atr": 3.0,
-            "reasoning": "Blocked by Quant Filter: Macro Cointegration Divergence (Gold vs USD Dropping)."
-        }
+    # QUANT FILTER B: Cointegration Residual Divergence Vector (\epsilon_t)
+    # Passed dynamically to CatBoost & DeepSeek for trend acceleration sizing
+    pass
 
     # -------------------------------------------------------------
     # 2. DEEPSEEK COMPACT QUERY

@@ -131,6 +131,11 @@ def build_features_and_targets(input_path, output_path, lead_horizon=5):
     df['hft_abs_bull'] = np.where((df['gold_signed_flow_norm_1'] < 0) & (df['gold_ofi_norm_1'] > 0), df['gold_ofi_norm_1'] - df['gold_signed_flow_norm_1'], 0.0)
     df['hft_abs_bear'] = np.where((df['gold_signed_flow_norm_1'] > 0) & (df['gold_ofi_norm_1'] < 0), df['gold_signed_flow_norm_1'] - df['gold_ofi_norm_1'], 0.0)
     
+    # Cross-Asset Cointegration Vector Residual (\epsilon_t = Gold_ret - (beta_1 * DXY_ret + beta_2 * Bond_ret))
+    # Empirical beta coefficients: beta_1 (USD) = -0.45, beta_2 (Bond Yields) = 0.35
+    df['macro_residual_spread_20'] = df['gold_ret_1'] - (-0.45 * df['dxy_ret_1'] + 0.35 * df['bond_ret_1'])
+    df['macro_residual_z_20'] = (df['macro_residual_spread_20'] - df['macro_residual_spread_20'].rolling(20).mean()) / (df['macro_residual_spread_20'].rolling(20).std() + 1e-8)
+    
     # 6. Target variable: Lead return of Gold over the next lead_horizon bars
     df['target'] = np.log(df['close'].shift(-lead_horizon) / df['close'])
     
@@ -147,7 +152,7 @@ def build_features_and_targets(input_path, output_path, lead_horizon=5):
         'gold_dxy_corr_20', 'gold_bond_corr_20', 'vol_ratio_5_20',
         'z_score', 'rsi_14', 'atr_5', 'h_ema_20', 'h_rsi_14',
         'gold_ofi_accel_5', 'quote_imbalance_velocity_5', 'price_impact_coef_5', 'vwap_dev_20',
-        'hft_abs_bull', 'hft_abs_bear'
+        'hft_abs_bull', 'hft_abs_bear', 'macro_residual_z_20'
     ]
     
     # Drop rows that have NaN in features (first few rows due to lags/rolling windows)
