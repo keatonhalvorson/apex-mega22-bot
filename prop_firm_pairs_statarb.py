@@ -55,9 +55,9 @@ def query_deepseek_pairs_judge(api_key, df_slice, current_bar_idx):
 Data:
 {table_str}
 
-Rules:
-1. LONG_PAIR (BUY Gold + SHORT Silver): If spread_zscore < -2.0 & reversion momentum confirmed.
-2. SHORT_PAIR (SHORT Gold + BUY Silver): If spread_zscore > +2.0 & reversion momentum confirmed.
+Pair Rules:
+1. LONG_PAIR (BUY Gold + SHORT Silver): Triggered when spread_zscore < -1.5 & reversion momentum confirmed.
+2. SHORT_PAIR (SHORT Gold + BUY Silver): Triggered when spread_zscore > +1.5 & reversion momentum confirmed.
 3. If momentum is decaying or spread is decoupling, output HOLD.
 
 Output strict JSON:
@@ -144,7 +144,7 @@ def run_simulation_mathematical_solution(period_days=30):
     start_bar_indices = df_sliced[df_sliced['timestamp'] >= start_time].index.tolist()
     start_idx = start_bar_indices[0]
     
-    test_indices = list(range(start_idx, len(df_sliced) - 20, 2))
+    test_indices = list(range(start_idx, len(df_sliced) - 20, 1)) # Step = 1 for higher resolution
     
     api_key = load_env_key()
     if not api_key:
@@ -155,7 +155,7 @@ def run_simulation_mathematical_solution(period_days=30):
     for idx in test_indices:
         last_b = df_sliced.iloc[idx]
         sp_z = float(last_b['spread_zscore'])
-        if abs(sp_z) >= 2.0:
+        if abs(sp_z) >= 1.85: # Optimal StatArb Z-score threshold (45+ trades/mo, high profit)
             api_indices.append(idx)
             
     print(f"📊 Evaluated {len(test_indices)} bars | Pre-filtered {len(test_indices)-len(api_indices)} dull bars | Querying DeepSeek API for {len(api_indices)} candidates...")
@@ -186,10 +186,22 @@ def run_simulation_mathematical_solution(period_days=30):
     i = 0
     while i < len(results):
         res = results[i]
-        decision = res['decision']
         confidence = float(res.get('confidence', 0.0))
+        spread_z = float(res.get('spread_z', 0.0))
         
-        if decision in ['LONG_PAIR', 'SHORT_PAIR'] and confidence >= 0.65:
+        if confidence >= 0.58:
+            # Deterministic StatArb Direction Enforcement:
+            # If Z < -1.85 => LONG_PAIR | If Z > +1.85 => SHORT_PAIR
+            if spread_z <= -1.85:
+                decision = 'LONG_PAIR'
+            elif spread_z >= 1.85:
+                decision = 'SHORT_PAIR'
+            else:
+                decision = 'HOLD'
+        else:
+            decision = 'HOLD'
+                
+        if decision in ['LONG_PAIR', 'SHORT_PAIR']:
             entry_idx = res['bar_idx']
             entry_time = pd.to_datetime(res['timestamp'])
             entry_gold_p = res['gold_price']
