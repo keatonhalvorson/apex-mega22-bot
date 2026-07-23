@@ -242,8 +242,9 @@ def run_simons_llm_ensemble_engine():
             # ---------------------------------------------------------
             # MASTER SECRET: COMPOUND FRACTIONAL KELLY SIZING
             # ---------------------------------------------------------
+            # Simons Volatility Sizing (0.80% Base Risk for Ultra-Low Drawdown)
             vol_scaler = min(1.3, max(0.7, 0.00002 / (r_vol + 1e-8)))
-            base_risk_pct = 0.010 * confidence * vol_scaler
+            base_risk_pct = 0.0080 * confidence * vol_scaler
             
             cash_risk = current_balance * base_risk_pct
             
