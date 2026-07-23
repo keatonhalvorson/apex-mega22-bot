@@ -18,124 +18,47 @@ def load_env_key():
                 return line.strip().split("=")[1]
     return None
 
-def fetch_decision_institutional(api_key, df_slice, current_bar_idx, ml_model):
-    """
-    Elite Institutional Quant Pipeline:
-    1. Microstructure Elasticity Filter: Rejects spurious low-liquidity price spikes (Adverse Selection).
-    2. Cross-Asset Residual Divergence Filter: Checks Gold vs DXY/Bond cointegration vector.
-    3. Fractional Kelly & Volatility Targeting Sizing.
-    4. Compact DeepSeek Meta-Judge query.
-    """
-    context_bars = df_slice.iloc[current_bar_idx-9:current_bar_idx+1]
+def query_deepseek_institutional_judge(api_key, df_slice, current_bar_idx, ml_pred):
+    context_bars = df_slice.iloc[current_bar_idx-4:current_bar_idx+1]
     last_bar = context_bars.iloc[-1]
     
     timestamp = last_bar['timestamp']
-    close_price = float(last_bar['close'])
-    spread_entry = float(last_bar['spread'])
-    atr_val = float(last_bar['atr_5'])
+    close_p = float(last_bar['close'])
+    spread = float(last_bar['spread'])
+    realized_vol = float(last_bar['realized_vol'])
+    signed_flow = float(last_bar['signed_flow'])
+    macro_res = float(last_bar['macro_residual_z_20'])
     
-    feature_cols = [
-        'gold_ret_1', 'gold_ret_3', 'gold_ret_5', 'gold_ret_10',
-        'gold_ofi_norm_1', 'gold_ofi_norm_5',
-        'gold_signed_flow_norm_1', 'gold_signed_flow_norm_5',
-        'gold_quote_imbalance_1', 'gold_quote_imbalance_5',
-        'gold_realized_vol_1', 'gold_realized_vol_5',
-        'dxy_ret_1', 'dxy_ret_3', 'dxy_ret_5', 'dxy_vol_5',
-        'bond_ret_1', 'bond_ret_3', 'bond_ret_5', 'bond_vol_5',
-        'vix_ret_1', 'vix_ret_3', 'vix_ret_5', 'vix_z_score_20',
-        'gold_dxy_corr_20', 'gold_bond_corr_20', 'vol_ratio_5_20',
-        'z_score', 'rsi_14', 'h_ema_20', 'h_rsi_14',
-        'gold_ofi_accel_5', 'quote_imbalance_velocity_5', 'price_impact_coef_5', 'vwap_dev_20',
-        'hft_abs_bull', 'hft_abs_bear', 'macro_residual_z_20'
-    ]
+    high_low = context_bars['high'] - context_bars['low']
+    high_close = np.abs(context_bars['high'] - context_bars['close'].shift(1))
+    low_close = np.abs(context_bars['low'] - context_bars['close'].shift(1))
+    ranges = pd.concat([high_low, high_close, low_close], axis=1)
+    atr = float(ranges.max(axis=1).iloc[-1])
     
-    current_features = context_bars[feature_cols].copy()
-    ml_preds = ml_model.predict(current_features)
-    ml_pred = float(ml_preds[-1])
+    table_str = context_bars[[
+        'timestamp', 'close', 'signed_flow', 'ofi_dollar', 'quote_imbalance', 'realized_vol', 'macro_residual_z_20'
+    ]].to_string(index=False)
     
-    # -------------------------------------------------------------
-    # 1. INSTITUTIONAL QUANT FILTERS (NO RETAIL TRICKS)
-    # -------------------------------------------------------------
-    z_sc = float(last_bar['z_score'])
-    abs_bull = float(last_bar['hft_abs_bull'])
-    abs_bear = float(last_bar['hft_abs_bear'])
-    vol_rat = float(last_bar['vol_ratio_5_20'])
-    price_elasticity = float(last_bar['price_impact_coef_5'])
-    macro_res_z = float(last_bar['macro_residual_z_20'])
-    
-    has_ml_signal = abs(ml_pred) > 0.0003
-    has_hft_signal = (abs_bull > 0.20) or (abs_bear > 0.20)
-    has_stretch_signal = abs(z_sc) > 0.8
-    has_vol_signal = vol_rat > 1.05
-    
-    if not (has_ml_signal or has_hft_signal or has_stretch_signal or has_vol_signal):
-        return {
-            "bar_idx": current_bar_idx,
-            "timestamp": str(timestamp),
-            "close": close_price,
-            "spread": spread_entry,
-            "atr": atr_val,
-            "ml_pred_return": ml_pred,
-            "decision": "HOLD",
-            "confidence": 0.0,
-            "trade_mode": "HOLD",
-            "stop_loss_atr": 1.5,
-            "take_profit_atr": 3.0,
-            "reasoning": "Pre-filtered locally in Python (no signal setup)."
-        }
-        
-    # QUANT FILTER A: Price Elasticity Spurious Spike Block (Adverse Selection)
-    # If price moved rapidly on zero OFI (elasticity > 15.0), it's a thin liquidity trap.
-    if abs(price_elasticity) > 15.0 and not has_hft_signal:
-        return {
-            "bar_idx": current_bar_idx,
-            "timestamp": str(timestamp),
-            "close": close_price,
-            "spread": spread_entry,
-            "atr": atr_val,
-            "ml_pred_return": ml_pred,
-            "decision": "HOLD",
-            "confidence": 0.0,
-            "trade_mode": "HOLD",
-            "stop_loss_atr": 1.5,
-            "take_profit_atr": 3.0,
-            "reasoning": "Blocked by Quant Filter: High Price Impact Elasticity (Thin Liquidity Trap)."
-        }
-        
-    # QUANT FILTER B: Cointegration Residual Divergence Vector (\epsilon_t)
-    # Passed dynamically to CatBoost & DeepSeek for trend acceleration sizing
-    pass
-
-    # -------------------------------------------------------------
-    # 2. DEEPSEEK COMPACT QUERY
-    # -------------------------------------------------------------
-    context_bars_compact = context_bars.copy()
-    context_bars_compact['ml_pred_bps'] = (ml_preds * 10000).round(1)
-    
-    table_str = context_bars_compact[[
-        'timestamp', 'close', 'z_score', 'rsi_14', 'h_ema_20',
-        'hft_abs_bull', 'hft_abs_bear', 'vol_ratio_5_20', 'ml_pred_bps'
-    ]].tail(5).to_string(index=False)
-    
-    prompt = f"""HFT Prop Trading Meta-Judge. Pass Funded Account Challenge with strict risk.
-Data (last 5 Gold Dollar Bars):
+    prompt = f"""You are a Lead Quantitative Trader at Renaissance Technologies managing an Institutional Gold Fund.
+Dataset of last 5 Gold Dollar Bars:
 {table_str}
 
-Rules:
-1. Macro Trend: close > h_ema_20 => BUY / BUY Pullback. close < h_ema_20 => SHORT / SHORT Rally.
-2. Signal Verification:
-   - MACRO_TREND (TP=3.0, SL=1.5): vol_ratio_5_20 > 1.02 & strong ML forecast (|ml_pred_bps| > 3.0).
-   - FAST_SCALP (TP=1.2, SL=0.8): Quick reversal/exhaustion via HFT absorption (hft_abs_bull/bear > 0.20) or Z-score pullback (|z_score| > 0.8).
-3. Do NOT buy if rsi_14 > 65. Do NOT short if rsi_14 < 35.
+Context:
+- Current Price: ${close_p:.2f} | Current ATR: ${atr:.2f}
+- CatBoost ML Model Lead Return Forecast: {ml_pred:+.5f}
+- Macro Cointegration Residual (epsilon_t): {macro_res:+.2f}
+- Signed Flow: {signed_flow:+.2f}
+
+Institutional Execution Modes:
+- Mode 1: MACRO_TREND (Target 3.0 ATR, SL 1.5 ATR). Use when Macro Residual Vector (epsilon_t) and Order Flow agree.
+- Mode 2: FAST_SCALP (Target 1.2 ATR, SL 0.8 ATR). Use when high order flow imbalance exists in short window.
 
 Output strict JSON:
 {{
   "decision": "BUY" | "SHORT" | "HOLD",
-  "trade_mode": "MACRO_TREND" | "FAST_SCALP" | "HOLD",
+  "trade_mode": "MACRO_TREND" | "FAST_SCALP",
   "confidence": <float 0.0 to 1.0>,
-  "stop_loss_atr": <float>,
-  "take_profit_atr": <float>,
-  "reasoning": "<concise 1 sentence>"
+  "reasoning": "<concise 1 sentence rationale>"
 }}"""
 
     url = "https://api.deepseek.com/chat/completions"
@@ -156,7 +79,7 @@ Output strict JSON:
             req = urllib.request.Request(
                 url, data=json.dumps(data).encode('utf-8'), headers=headers, method='POST'
             )
-            with urllib.request.urlopen(req, timeout=15) as response:
+            with urllib.request.urlopen(req, timeout=12) as response:
                 resp_body = response.read().decode('utf-8')
                 resp_json = json.loads(resp_body)
                 raw_content = resp_json['choices'][0]['message']['content']
@@ -164,90 +87,120 @@ Output strict JSON:
                 
                 decision_data['bar_idx'] = current_bar_idx
                 decision_data['timestamp'] = str(timestamp)
-                decision_data['close'] = close_price
-                decision_data['spread'] = spread_entry
-                decision_data['atr'] = atr_val
-                decision_data['ml_pred_return'] = ml_pred
+                decision_data['close'] = close_p
+                decision_data['spread'] = spread
+                decision_data['atr'] = atr
+                decision_data['ml_pred'] = ml_pred
                 return decision_data
-        except Exception as e:
-            time.sleep(1.0 * (attempt + 1))
+        except Exception:
+            time.sleep(1.0)
             
     return {
         "bar_idx": current_bar_idx,
         "timestamp": str(timestamp),
-        "close": close_price,
-        "spread": spread_entry,
-        "atr": atr_val,
-        "ml_pred_return": ml_pred,
+        "close": close_p,
+        "spread": spread,
+        "atr": atr,
+        "ml_pred": ml_pred,
         "decision": "HOLD",
+        "trade_mode": "MACRO_TREND",
         "confidence": 0.0,
-        "trade_mode": "HOLD",
-        "stop_loss_atr": 1.5,
-        "take_profit_atr": 3.0,
-        "reasoning": "API connection failed."
+        "reasoning": "API failed"
     }
 
 def run_simulation(period_name="LAST_MONTH"):
-    print(f"⏳ Loading features_and_targets.csv for {period_name}...")
-    df = pd.read_csv("processed_data/features_and_targets.csv")
+    feature_file = "processed_data/features_and_targets.csv"
+    model_file = "processed_data/ml_trend_model.cbm"
+    
+    if not os.path.exists(feature_file) or not os.path.exists(model_file):
+        print("❌ Model or feature file missing.")
+        return
+        
+    df = pd.read_csv(feature_file)
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
     
     last_time = df['timestamp'].max()
-    if period_name == "LAST_MONTH": # June
-        start_time = last_time - pd.Timedelta(days=30)
-        df_sliced = df[df['timestamp'] >= start_time - pd.Timedelta(days=5)].copy().reset_index(drop=True)
-    elif period_name == "PREVIOUS_MONTH": # May
-        end_time = last_time - pd.Timedelta(days=30)
-        start_time = end_time - pd.Timedelta(days=30)
-        df_sliced = df[(df['timestamp'] >= start_time - pd.Timedelta(days=5)) & (df['timestamp'] <= end_time)].copy().reset_index(drop=True)
-    else: # APRIL
-        end_time = last_time - pd.Timedelta(days=60)
-        start_time = end_time - pd.Timedelta(days=30)
-        df_sliced = df[(df['timestamp'] >= start_time - pd.Timedelta(days=5)) & (df['timestamp'] <= end_time)].copy().reset_index(drop=True)
-        
+    start_time = last_time - pd.Timedelta(days=30)
+    
+    df_sliced = df[df['timestamp'] >= start_time - pd.Timedelta(days=5)].copy().reset_index(drop=True)
     start_bar_indices = df_sliced[df_sliced['timestamp'] >= start_time].index.tolist()
     start_idx = start_bar_indices[0]
-    test_indices = list(range(start_idx, len(df_sliced) - 15, 3))
+    
+    test_indices = list(range(start_idx, len(df_sliced) - 20, 2))
+    
+    ml_model = CatBoostRegressor()
+    ml_model.load_model(model_file)
+    
+    feature_cols = [
+        'gold_ret_1', 'gold_ret_3', 'gold_ret_5', 'gold_ret_10',
+        'gold_ofi_norm_1', 'gold_ofi_norm_5', 'gold_signed_flow_norm_1', 'gold_signed_flow_norm_5',
+        'gold_quote_imbalance_1', 'gold_quote_imbalance_5', 'gold_realized_vol_1', 'gold_realized_vol_5',
+        'dxy_ret_1', 'dxy_ret_3', 'dxy_ret_5', 'dxy_vol_5',
+        'bond_ret_1', 'bond_ret_3', 'bond_ret_5', 'bond_vol_5',
+        'vix_ret_1', 'vix_ret_3', 'vix_ret_5', 'vix_z_score_20',
+        'gold_dxy_corr_20', 'gold_bond_corr_20', 'vol_ratio_5_20',
+        'z_score', 'rsi_14', 'h_rsi_14', 'gold_ofi_accel_5',
+        'quote_imbalance_velocity_5', 'price_impact_coef_5', 'vwap_dev_20',
+        'hft_abs_bull', 'hft_abs_bear'
+    ]
+    
+    ml_preds_all = ml_model.predict(df_sliced[feature_cols])
     
     api_key = load_env_key()
     if not api_key:
         print("❌ DEEPSEEK_API_KEY missing.")
         return
         
-    ml_model = CatBoostRegressor()
-    ml_model.load_model("processed_data/ml_trend_model.cbm")
-    
-    print(f"📈 Running Institutional Quant Strategy over {len(test_indices)} bars...")
+    # Local Pre-filtering
+    api_indices = []
+    for idx in test_indices:
+        last_b = df_sliced.iloc[idx]
+        ml_p = float(ml_preds_all[idx])
+        ofi_val = float(last_b['ofi_dollar'])
+        flow_val = float(last_b['signed_flow'])
+        macro_res = float(last_b['macro_residual_z_20'])
+        elasticity = float(last_b['price_impact_coef_5'])
+        
+        # Microstructure Elasticity Guard: Reject thin liquidity traps
+        if elasticity > 0.05:
+            continue
+            
+        if abs(ml_p) > 0.0003 or abs(ofi_val) > 50.0 or abs(flow_val) > 100.0 or abs(macro_res) > 1.2:
+            api_indices.append((idx, ml_p))
+            
+    print(f"📈 Running Institutional Quant Strategy (with Simons Medallion Circuit Breaker) over {len(test_indices)} bars...")
+    print(f"📊 Filtered out {len(test_indices)-len(api_indices)} noise bars | Querying DeepSeek API for {len(api_indices)} candidate setups...")
     
     results = []
     with ThreadPoolExecutor(max_workers=10) as executor:
         futures = {
-            executor.submit(fetch_decision_institutional, api_key, df_sliced, idx, ml_model): idx 
-            for idx in test_indices
+            executor.submit(query_deepseek_institutional_judge, api_key, df_sliced, idx, ml_p): idx 
+            for idx, ml_p in api_indices
         }
         for future in as_completed(futures):
-            res = future.result()
-            results.append(res)
-                
+            results.append(future.result())
+            
     results = sorted(results, key=lambda x: x['bar_idx'])
     
     # -------------------------------------------------------------
-    # INSTITUTIONAL ACCOUNT SIMULATION ($10,000 Account)
-    # With Fractional Kelly Allocation & Dynamic Volatility Targeting
+    # SIMONS MEDALLION RISK & BACKTEST ENGINE
     # -------------------------------------------------------------
     start_balance = 10000.0
+    current_balance = start_balance
     commission = 0.00002
     
     trades_executed = []
-    current_balance = start_balance
-    
-    recent_pnl_pcts = [] # Track rolling trade returns for Volatility Targeting
+    recent_pnl_pcts = []
     
     all_timestamps = df_sliced.loc[start_idx:, 'timestamp'].reset_index(drop=True)
     equity_history = pd.DataFrame({'timestamp': all_timestamps})
     equity_history['equity'] = current_balance
     equity_history.set_index('timestamp', inplace=True)
+    
+    current_day = None
+    day_start_balance = start_balance
+    daily_circuit_broken = False
     
     i = 0
     while i < len(results):
@@ -255,9 +208,27 @@ def run_simulation(period_name="LAST_MONTH"):
         decision = res['decision']
         confidence = float(res['confidence'])
         trade_mode = res.get('trade_mode', 'MACRO_TREND')
+        bar_idx = res['bar_idx']
         
+        # ---------------------------------------------------------
+        # JIM SIMONS' HARD 1.8% DAILY STOP CIRCUIT BREAKER
+        # ---------------------------------------------------------
+        bar_date = pd.to_datetime(res['timestamp']).date()
+        if bar_date != current_day:
+            current_day = bar_date
+            day_start_balance = current_balance
+            daily_circuit_broken = False
+            
+        current_daily_dd = (day_start_balance - current_balance) / day_start_balance
+        if current_daily_dd >= 0.018: # 1.8% Hard Daily Stop Cutoff!
+            daily_circuit_broken = True
+            
+        if daily_circuit_broken:
+            i += 1
+            continue
+            
         if decision in ['BUY', 'SHORT'] and confidence >= 0.65:
-            entry_idx = res['bar_idx']
+            entry_idx = bar_idx
             entry_time = pd.to_datetime(res['timestamp'])
             entry_price = res['close']
             atr = res['atr']
@@ -269,33 +240,17 @@ def run_simulation(period_name="LAST_MONTH"):
                 sl_atr = float(res.get('stop_loss_atr', 1.5))
                 tp_atr = float(res.get('take_profit_atr', 3.0))
                 
-            # ---------------------------------------------------------
-            # QUANT INNOVATION 1: FRACTIONAL KELLY SIZING WITH SHRINKAGE
-            # f* = (p * b - (1 - p)) / b
-            # ---------------------------------------------------------
-            p_win = max(0.51, min(0.90, confidence)) # Calibrated probability
-            b_payoff = tp_atr / (sl_atr + 1e-8) # Payoff ratio
+            # Fractional Kelly Sizing with 0.95% Base Target
+            p_win = max(0.51, min(0.90, confidence))
+            b_payoff = tp_atr / (sl_atr + 1e-8)
             kelly_f = (p_win * b_payoff - (1.0 - p_win)) / b_payoff
-            half_kelly_pct = max(0.003, min(0.015, 0.30 * kelly_f)) # Fractional Kelly 30%
-            
-            # ---------------------------------------------------------
-            # QUANT INNOVATION 2: DYNAMIC VOLATILITY TARGETING
-            # Scale down size if recent trade equity volatility is clustering
-            # ---------------------------------------------------------
-            if len(recent_pnl_pcts) >= 5:
-                rolling_vol = np.std(recent_pnl_pcts[-5:])
-                target_vol = 0.01
-                vol_target_scalar = min(1.2, max(0.4, target_vol / (rolling_vol + 1e-8)))
-            else:
-                vol_target_scalar = 1.0
-                
-            final_risk_pct = half_kelly_pct * vol_target_scalar
+            half_kelly_pct = max(0.003, min(0.0095, 0.22 * kelly_f))
             
             sl_dist = sl_atr * atr
             tp_dist = tp_atr * atr
             
             sl_pct_of_price = sl_dist / entry_price
-            cash_risk = current_balance * final_risk_pct
+            cash_risk = current_balance * half_kelly_pct
             position_size_usd = cash_risk / (sl_pct_of_price + 1e-8)
             units = position_size_usd / entry_price
             
@@ -355,8 +310,6 @@ def run_simulation(period_name="LAST_MONTH"):
                 raw_profit = units * (entry_price - exit_price)
                 
             net_profit_cash = raw_profit - total_costs
-            net_return_pct = net_profit_cash / current_balance
-            recent_pnl_pcts.append(net_return_pct)
             
             old_balance = current_balance
             current_balance += net_profit_cash
@@ -368,8 +321,7 @@ def run_simulation(period_name="LAST_MONTH"):
                     float_profit = units * (t_close - entry_price)
                 else:
                     float_profit = units * (entry_price - t_close)
-                floating_equity = old_balance + float_profit
-                equity_history.loc[t_bar, 'equity'] = floating_equity
+                equity_history.loc[t_bar, 'equity'] = old_balance + float_profit
                 
             equity_history.loc[exit_time:, 'equity'] = current_balance
             
@@ -378,9 +330,7 @@ def run_simulation(period_name="LAST_MONTH"):
                 'exit_time': exit_time.strftime('%Y-%m-%d %H:%M'),
                 'type': decision,
                 'mode': trade_mode,
-                'risk_pct': final_risk_pct,
-                'entry_price': entry_price,
-                'exit_price': exit_price,
+                'risk_pct': half_kelly_pct,
                 'outcome': outcome,
                 'cash_profit': net_profit_cash,
                 'balance_after': current_balance,
@@ -403,7 +353,6 @@ def run_simulation(period_name="LAST_MONTH"):
     
     for date, group in daily_groups:
         day_open = prev_day_close_balance
-        day_high = group['equity'].max()
         day_low = group['equity'].min()
         day_close = group['equity'].iloc[-1]
         
@@ -423,7 +372,7 @@ def run_simulation(period_name="LAST_MONTH"):
     max_total_dd = equity_history['drawdown'].max()
     
     print("\n=======================================================")
-    print(f"   ELITE INSTITUTIONAL QUANT SUMMARY: {period_name}")
+    print("   JIM SIMONS' MEDALLION INSTITUTIONAL QUANT SUMMARY: LAST_MONTH")
     print("=======================================================")
     print(f" Starting Balance       : ${start_balance:,.2f}")
     print(f" Final Balance          : ${current_balance:,.2f}")
@@ -433,9 +382,9 @@ def run_simulation(period_name="LAST_MONTH"):
     print(f" Max Total Drawdown     : {max_total_dd:.2%} (Prop Firm Limit: 10.0%)")
     
     if trades_executed:
-        scalp_trades = [t for t in trades_executed if t['mode'] == 'FAST_SCALP']
-        macro_trades = [t for t in trades_executed if t['mode'] == 'MACRO_TREND']
-        print(f" Breakdown: {len(macro_trades)} MACRO_TREND trades | {len(scalp_trades)} FAST_SCALP trades")
+        wins = [t for t in trades_executed if t['outcome'] == 'WIN']
+        win_rate = len(wins) / len(trades_executed)
+        print(f" Strategy Win Rate      : {win_rate:.2%}")
         print("\nExecuted Trades Ledger (Sample):")
         for idx, t in enumerate(trades_executed[:10]):
             print(f" #{idx+1}: {t['type']} ({t['mode']}) | Risk: {t['risk_pct']:.2%} | Outcome: {t['outcome']} | PnL: ${t['cash_profit']:+,.2f}")
