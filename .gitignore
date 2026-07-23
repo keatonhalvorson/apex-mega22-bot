@@ -8,6 +8,7 @@ env/
 
 # Large Data Files (Raw 1Y Ticks)
 xauusd_ticks_1y.csv
+xagusd_ticks_1y.csv
 dxy_ticks_1y.csv
 ustbond_ticks_1y.csv
 vix_ticks_1y.csv
