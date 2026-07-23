@@ -1,9 +1,17 @@
 # ApexPredator - Hybrid HFT & Machine Learning Quant Strategy
 
+## 🏷️ معلومات النسخة الحالية في Git (Git Version & Release Info)
+* **وسم النسخة (Git Tag)**: `v1.0-hybrid-ensemble`
+* **اسم الفرع (Branch Name)**: `main`
+* **معرف الـ Commit الأصلي**: `b2880e87811082f39d5a5501a94c608ed3d32b61` (اختصار: `b2880e8`)
+* **تاريخ حفظ النسخة**: 23 يوليو 2026
+
+---
+
 ## 📌 نبذة عن الاستراتيجية (System Overview)
 استراتيجية تداول كمية هجينة (Hybrid Ensemble Quant Strategy) مخصصة لتداولات الذهب (**XAUUSD**) ومصممة خصيصاً لتجاوز اختبارات حسابات التمويل (Prop Firm Challenges) مثل FTMO و FundedNext بتأمين كامل للحساب من قوانين الخسارة اليومية والكلية.
 
-تعتمد الاستراتيجية على الدمج بين:
+تتمد الاستراتيجية على الدمج بين:
 1. **التعلم الآلي (CatBoost Regressor)**: للتنبؤ بالاتجاه الإحصائي وعائد البارات الـ 5 القادمة بناءً على بيانات الميكروستركشر (`ml_trend_model.cbm`).
 2. **النموذج اللغوي الكمي (DeepSeek LLM)**: كمحرك لاتخاذ القرار النهائي والمصادقة على التنبؤات باستخدام بيانات الـ HFT اللحظية (Order Flow Imbalance, Passive Absorption, Cross-Asset Correlations).
 
