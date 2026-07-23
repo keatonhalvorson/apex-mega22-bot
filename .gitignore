@@ -1,0 +1,22 @@
+# Secrets & API Keys
+.env
+
+# Virtual Environments
+Predator_env/
+venv/
+env/
+
+# Large Data Files (Raw 1Y Ticks)
+xauusd_ticks_1y.csv
+dxy_ticks_1y.csv
+ustbond_ticks_1y.csv
+vix_ticks_1y.csv
+tv_gold_1h_2m.csv
+
+# Python Cache & Logs
+__pycache__/
+*.pyc
+*.pyo
+catboost_info/
+*.log
+.DS_Store
