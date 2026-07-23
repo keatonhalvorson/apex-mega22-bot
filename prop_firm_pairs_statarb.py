@@ -197,9 +197,17 @@ def run_simulation_mathematical_solution(period_days=30):
             vol_r = float(df_sliced.loc[entry_idx, 'vol_ratio'])
             spread_z = res['spread_z']
             
-            gold_lots = 0.05
+            # DYNAMIC 1.0% RISK POSITION SIZING
+            cash_risk = current_balance * 0.01
+            atr_gold = float(df_sliced.loc[entry_idx, 'close']) * 0.005 # ~0.5% ATR
+            
+            gold_lots = max(0.04, min(0.18, cash_risk / (1.5 * atr_gold * 100.0 + 1e-8)))
             gold_oz = gold_lots * 100.0
-            silver_oz = gold_oz * (entry_gold_p / (entry_silver_p + 1e-8)) * vol_r * 0.20
+            gold_usd_val = gold_oz * entry_gold_p
+            
+            silver_usd_val = gold_usd_val * vol_r * 0.85
+            silver_oz = silver_usd_val / (entry_silver_p + 1e-8)
+            silver_lots = silver_oz / 5000.0
             
             outcome = None
             exit_gold_p = entry_gold_p
