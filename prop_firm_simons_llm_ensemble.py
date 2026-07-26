@@ -143,8 +143,8 @@ def run_simons_llm_ensemble_engine():
     df = df.sort_values('timestamp').reset_index(drop=True)
     
     last_time = df['timestamp'].max()
-    end_time = last_time - pd.Timedelta(days=30)
-    start_time = last_time - pd.Timedelta(days=60) # May Period
+    end_time = last_time
+    start_time = last_time - pd.Timedelta(days=30) # JUNE Period
     
     df_sliced = df[(df['timestamp'] >= start_time - pd.Timedelta(days=5)) & (df['timestamp'] <= end_time)].copy().reset_index(drop=True)
     start_bar_indices = df_sliced[df_sliced['timestamp'] >= start_time].index.tolist()
