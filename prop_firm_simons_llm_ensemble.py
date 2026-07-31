@@ -143,8 +143,8 @@ def run_simons_llm_ensemble_engine():
     df = df.sort_values('timestamp').reset_index(drop=True)
     
     last_time = df['timestamp'].max()
-    end_time = last_time
-    start_time = last_time - pd.Timedelta(days=30) # JUNE Period
+    end_time = last_time - pd.Timedelta(days=30)
+    start_time = last_time - pd.Timedelta(days=60) # May Period
     
     df_sliced = df[(df['timestamp'] >= start_time - pd.Timedelta(days=5)) & (df['timestamp'] <= end_time)].copy().reset_index(drop=True)
     start_bar_indices = df_sliced[df_sliced['timestamp'] >= start_time].index.tolist()
@@ -241,31 +241,20 @@ def run_simons_llm_ensemble_engine():
         regime = res.get('regime_type', 'UNKNOWN')
         bar_idx = res['bar_idx']
         
-        # -------------------------------------------------------------
-        # 2026 HIERARCHICAL RISK-GATED MULTI-THRESHOLD SCALING (ARXIV 2026)
-        # Gate 0 (Normal): DD <= 1.0% -> 1.00x Risk
-        # Gate 1 (Soft Shield): DD > 1.0% -> 0.65x Risk
-        # Gate 2 (Circuit Breaker): DD >= 1.8% -> 0.00x (Stop Trading Day)
-        # -------------------------------------------------------------
+        # Simons' Hard 1.8% Daily Stop Circuit Breaker
         bar_date = df_sliced.loc[bar_idx, 'date']
         if bar_date != current_day:
             current_day = bar_date
             day_start_balance = current_balance
             daily_circuit_broken = False
             
-        current_daily_dd = max(0.0, (day_start_balance - current_balance) / day_start_balance)
-        
+        current_daily_dd = (day_start_balance - current_balance) / day_start_balance
         if current_daily_dd >= 0.018:
             daily_circuit_broken = True
             
         if daily_circuit_broken:
             i += 1
             continue
-            
-        # Hierarchical Risk-Gate Multiplier
-        risk_gate_mult = 1.00
-        if current_daily_dd > 0.010:
-            risk_gate_mult = 0.65 # Soft Defense Gate (Squashes intraday loss cascades)
             
         if decision in ['BUY', 'SHORT'] and confidence >= 0.58:
             entry_idx = bar_idx
@@ -281,10 +270,10 @@ def run_simons_llm_ensemble_engine():
                 atr = 2.0
                 
             # ---------------------------------------------------------
-            # MASTER SECRET: COMPOUND KELLY & HIERARCHICAL RISK-GATE SIZING
+            # MASTER SECRET: COMPOUND FRACTIONAL KELLY SIZING
             # ---------------------------------------------------------
             vol_scaler = min(1.3, max(0.7, 0.00002 / (r_vol + 1e-8)))
-            base_risk_pct = 0.010 * confidence * vol_scaler * risk_gate_mult
+            base_risk_pct = 0.010 * confidence * vol_scaler
             
             cash_risk = current_balance * base_risk_pct
             
