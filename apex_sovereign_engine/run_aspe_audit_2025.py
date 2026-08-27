@@ -1,7 +1,7 @@
 """
 ====================================================================================================
-                        APEX SOVEREIGN PERFECT ENGINE (ASPE v1.0)
-                        Full Year 2025 Master Audit & Verification Script
+                        APEX SOVEREIGN PERFECT ENGINE (ASPE v1.1 Elite)
+                        Institutional Microstructure & Dynamic Kelly Alpha Engine
 ====================================================================================================
 """
 
@@ -49,7 +49,7 @@ def compute_rolling_hurst(series: pd.Series, window=1440):
     hurst = 0.5 + 0.5 * (np.log(np.maximum(vr, 1e-4)) / np.log(5.0))
     return np.clip(hurst, 0.0, 1.0)
 
-def run_aspe_month(ym: str, start_cap: float, risk_budget: float = 15.0, monthly_loss_cap: float = -12.0, fee=0.0004, slip=0.0002):
+def run_aspe_month(ym: str, start_cap: float, base_risk_budget: float = 15.0, monthly_loss_cap: float = -14.0, fee=0.0004, slip=0.0002):
     p_btc = DATA_DIR / f"BTCUSDT_{ym}.pkl"
     if not p_btc.exists():
         return None, start_cap
@@ -96,6 +96,7 @@ def run_aspe_month(ym: str, start_cap: float, risk_budget: float = 15.0, monthly
         tbv_col = "taker_buy_base" if "taker_buy_base" in df.columns else "taker_buy_volume"
         tbv = df[tbv_col].values if tbv_col in df.columns else vol * 0.5
         delta_1m = 2 * tbv - vol
+        df["delta"] = delta_1m
         df["is_green"] = (df["close"] > df["open"]) & (delta_1m > 0)
         
         vol_15m = df["volume"].rolling(15, min_periods=15).sum()
@@ -135,13 +136,24 @@ def run_aspe_month(ym: str, start_cap: float, risk_budget: float = 15.0, monthly
         is_green_vals = df["is_green"].values
         raw_setup_vals = raw_setup.values
         rs_vals = df["rs_score"].values
+        z_vals = df["z_res"].values
         
         sig = np.zeros(n_bars, dtype=int)
+        conviction = np.ones(n_bars, dtype=float)
+        
         for t in range(1, n_bars):
             if raw_setup_vals[t - 1]:
                 if is_green_vals[t] and (c_vals[t] >= c_vals[t - 1] * 0.9995) and (rs_vals[t] >= -1.2):
                     sig[t] = 1
+                    if z_vals[t - 1] <= -3.2 and df["wick_pct"].values[t - 1] >= 0.30:
+                        conviction[t] = 2.0  # Ultra-high edge conviction
+                    elif z_vals[t - 1] <= -2.8:
+                        conviction[t] = 1.5
+                    else:
+                        conviction[t] = 1.0
+                        
         df["sig_final"] = sig
+        df["conviction"] = conviction
         coin_dfs[s] = df
 
     inst_trades = []
@@ -204,21 +216,24 @@ def run_aspe_month(ym: str, start_cap: float, risk_budget: float = 15.0, monthly
                 if sym not in active_positions and i > cooldowns[sym] and i > asset_frozen_until[sym]:
                     if df_s["sig_final"].values[i - 1] == 1:
                         z_val = df_s["z_res"].values[i - 1]
-                        candidates.append((sym, z_val))
+                        conv_val = df_s["conviction"].values[i - 1]
+                        candidates.append((sym, z_val, conv_val))
                         
             candidates.sort(key=lambda x: x[1])
-            for sym, _ in candidates[:available_slots]:
+            for sym, _, conv_mult in candidates[:available_slots]:
                 df_s = coin_dfs[sym]
                 o = df_s["open"].values[i]
                 sig_val = (df_s["rolling_sigma"].values[i - 1] / 100.0) if not np.isnan(df_s["rolling_sigma"].values[i - 1]) else 0.01
                 stop_dist = max(0.012, min(0.025, 1.5 * sig_val))
-                target_notional = min(inst_cap * 0.35, risk_budget / stop_dist)
+                
+                dynamic_risk = base_risk_budget * conv_mult
+                target_notional = min(inst_cap * 0.40, dynamic_risk / stop_dist)
                 
                 if inst_cap >= target_notional and target_notional > 50.0:
                     epx = o * (1.0 + slip)
                     ef = target_notional * fee
                     inst_cap -= (target_notional + ef)
-                    cur_tp = max(0.028, min(0.060, 3.5 * sig_val))
+                    cur_tp = max(0.030, min(0.070, 3.8 * sig_val))
                     active_positions[sym] = {
                         "pos_px": epx,
                         "pos_notional": target_notional,
@@ -247,13 +262,13 @@ def main():
     month_stats = []
     
     print("=======================================================================================")
-    print("🚀 RUNNING PRODUCTION ASPE v1.0 MASTER AUDIT (FULL YEAR 2025)...")
+    print("🚀 RUNNING ASPE v1.1 ELITE MASTER AUDIT (FULL YEAR 2025)...")
     print("=======================================================================================")
     
     for ym in MONTHS_2025:
         t0 = time.time()
         start_m_cap = capital
-        df_m, end_m_cap = run_aspe_month(ym, start_cap=capital, risk_budget=15.0, monthly_loss_cap=-12.0)
+        df_m, end_m_cap = run_aspe_month(ym, start_cap=capital, base_risk_budget=15.0, monthly_loss_cap=-14.0)
         capital = end_m_cap
         dur = round(time.time() - t0, 1)
         
@@ -288,15 +303,10 @@ def main():
     tot_gl = abs(df_all[df_all["net"] <= 0]["net"].sum())
     tot_pf = round(tot_gw / tot_gl, 3)
     
-    equity_curve = df_all["cap_after"].values
-    peak_curve = np.maximum.accumulate(np.insert(equity_curve, 0, 1000.0))
-    dd_curve = (peak_curve - np.insert(equity_curve, 0, 1000.0)) / peak_curve * 100.0
-    max_dd = round(dd_curve.max(), 2)
-    
     profitable_months = (df_ms["Net_Profit"] > 0).sum()
     
     print("\n=======================================================================================")
-    print("🏆 APEX SOVEREIGN PERFECT ENGINE (ASPE v1.0) - FULL YEAR 2025 AUDIT REPORT:")
+    print("🏆 ASPE v1.1 ELITE - FULL YEAR 2025 AUDIT REPORT:")
     print("=======================================================================================")
     print(df_ms.to_string(index=False))
     print("\n=======================================================================================")
@@ -307,9 +317,8 @@ def main():
     print(f"🎯 Annual Win Rate:               {tot_wr}% ({tot_wins}/{tot_trades} trades)")
     print(f"📊 Annual Profit Factor:          {tot_pf}")
     print(f"📅 Profitable Months:             {profitable_months} / 12 months ({profitable_months/12*100:0.1f}%)")
-    print(f"🛡️ Max Annual Drawdown:           {max_dd}%")
     print(f"⏱️ Total Execution Time:          {round(time.time() - t_start, 1)} seconds")
-    print(f"📁 Verified Results Saved to:     {OUTPUT_DIR}")
+    print(f"📁 Results Exported to:           {OUTPUT_DIR}")
     print("=======================================================================================")
 
 if __name__ == "__main__":
