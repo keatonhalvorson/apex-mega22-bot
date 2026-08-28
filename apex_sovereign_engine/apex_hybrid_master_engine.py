@@ -1,12 +1,15 @@
 """
 ====================================================================================================
-      🌌 APEX MATRIX PROFILE & GEOMETRIC SIGNATURE MOTIF MASTER ENGINE (AMP-SME v2.0)
+      🌌 APEX CROSS-SECTIONAL WHALE RESONANCE & MOTIF ENGINE (CS-WRE v2.0)
       
-      State-of-the-Art 2025-2026 Microstructure Pattern Discovery (Non-Overfitting):
-      1. Vectorized Sliding Window Z-Normalized Matrix Profile Euclidean Distance
-      2. Zero Parameter Memorization: Pure geometric structural invariance across multi-assets
-      3. 3-Tier Dynamic Parabolic Profit Lock (+0.5% at +1.6%, +1.6% at +3.0%, +3.0% at +4.8%, Target +5.5%)
-      4. Pure Spot 1x Cash (100% Halal, 0 Leverage, 0 MB Internet Data)
+      State-of-the-Art Cross-Sectional Microstructure Asset Selection & Pattern Discovery:
+      1. Dynamic Cross-Sectional Scanner across 27+ Diverse Cryptocurrencies
+      2. Kyle Microstructure Elasticity Tension (Lambda)
+      3. Cross-Sectional Order Flow Imbalance (OFI) Asymmetry
+      4. Directional Lead-Lag Transfer Entropy (BTC -> Altcoin)
+      5. Vectorized Z-Normalized Matrix Profile Euclidean Distance Matching
+      6. 3-Tier Dynamic Parabolic Profit Lock (+0.5% at +1.6%, +1.6% at +3.0%, +3.0% at +4.8%, Target +5.5%)
+      7. Pure Spot 1x Cash (100% Halal, 0 Leverage, 0 MB Internet Data)
 ====================================================================================================
 """
 
@@ -57,22 +60,21 @@ class ApexSovereignMasterEngine:
         return df_5m
 
     @staticmethod
-    def calculate_matrix_profile_indicators(df_5m: pd.DataFrame, df_btc_5m: pd.DataFrame) -> pd.DataFrame:
+    def calculate_cross_sectional_indicators(df_5m: pd.DataFrame, df_btc_5m: pd.DataFrame) -> pd.DataFrame:
         df = df_5m.merge(df_btc_5m, on="open_time", how="inner")
         
         # 1. Bollinger Bands & Moving Averages
         typical_px = (df['high'] + df['low'] + df['close']) / 3.0
-        df['bb_mid'] = typical_px.rolling(20).mean()
-        bb_std = typical_px.rolling(20).std()
+        df['bb_mid'] = typical_px.rolling(20, min_periods=5).mean()
+        bb_std = typical_px.rolling(20, min_periods=5).std().fillna(1e-4)
         df['bb_lower'] = df['bb_mid'] - (bb_std * 2.0)
         df['ema_slow'] = df['close'].ewm(span=50, adjust=False).mean()
-        df['vol_mean_30'] = df['volume'].rolling(30).mean()
+        df['vol_mean_30'] = df['volume'].rolling(30, min_periods=5).mean().fillna(1.0)
         
-        # 2. Fast Vectorized Matrix Profile (sliding_window_view)
+        # 2. Vectorized Matrix Profile
         c_vals = df['close'].values
         n_bars = len(c_vals)
         motif_dist = np.full(n_bars, 99.0)
-        
         if n_bars >= 12:
             windows = sliding_window_view(c_vals, window_shape=12)
             means = np.mean(windows, axis=1, keepdims=True)
@@ -80,61 +82,72 @@ class ApexSovereignMasterEngine:
             znorms = (windows - means) / stds
             dists = np.sqrt(np.mean((znorms - ARCHETYPE_ZNORM) ** 2, axis=1))
             motif_dist[11:] = dists
-            
         df['motif_distance'] = motif_dist
         
-        # 3. Microstructure Rejection
-        candle_range = df['high'] - df['low'] + 1e-6
-        lower_wick = np.minimum(df['open'], df['close']) - df['low']
-        df['wick_ratio'] = lower_wick / candle_range
+        # 3. Kyle Elasticity Lambda
+        ret_abs = (df['close'].pct_change()).abs().fillna(0)
+        vol_sqrt = np.sqrt(df['volume'] + 1e-6)
+        candle_range = (df['high'] - df['low']) / (df['close'] + 1e-6) + 1e-6
+        df['kyle_lambda'] = ret_abs / (vol_sqrt * candle_range + 1e-8)
+        lam_mean = df['kyle_lambda'].rolling(24, min_periods=5).mean().fillna(0)
+        lam_std = df['kyle_lambda'].rolling(24, min_periods=5).std().fillna(1.0) + 1e-6
+        df['lambda_z'] = (df['kyle_lambda'] - lam_mean) / lam_std
         
-        # 4. BinHV45 Statistical Metrics
-        rolling_mean_40 = df['close'].rolling(40).mean()
-        rolling_std_40 = df['close'].rolling(40).std()
+        # 4. OFI Asymmetry
+        df['ofi'] = (df['taker_buy'] - df['taker_sell']) / (df['volume'] + 1e-6)
+        
+        # 5. Microstructure Lower Wick Absorption
+        lower_wick = np.minimum(df['open'], df['close']) - df['low']
+        df['wick_ratio'] = lower_wick / (df['high'] - df['low'] + 1e-6)
+        
+        # 6. Directional Transfer Entropy Proxy
+        btc_ret = df['btc_c'].pct_change().fillna(0)
+        alt_ret = df['close'].pct_change().fillna(0)
+        alt_std = alt_ret.rolling(24, min_periods=5).std().fillna(1.0) + 1e-6
+        btc_std = btc_ret.rolling(24, min_periods=5).std().fillna(1.0) + 1e-6
+        df['te_proxy'] = (alt_ret * btc_ret.shift(1)).rolling(24, min_periods=5).mean().fillna(0) / (alt_std * btc_std)
+        
+        # 7. BinHV45 Metrics
+        rolling_mean_40 = df['close'].rolling(40, min_periods=5).mean()
+        rolling_std_40 = df['close'].rolling(40, min_periods=5).std().fillna(1e-4)
         df['lower_40'] = rolling_mean_40 - (rolling_std_40 * 2)
         df['bbdelta'] = (rolling_mean_40 - df['lower_40']).abs()
-        df['closedelta'] = (df['close'] - df['close'].shift()).abs()
+        df['closedelta'] = (df['close'] - df['close'].shift()).abs().fillna(0)
         df['tail'] = (df['close'] - df['low']).abs()
         
-        # Macro Safety Gate: Strict BTC Armor
-        is_btc_safe = (df['btc_24h'] > -2.2) & (df['btc_4h'] > -1.2)
+        # Macro BTC Safety Gate
+        btc_24 = df['btc_24h'].fillna(0)
+        btc_4 = df['btc_4h'].fillna(0)
+        is_btc_safe = (btc_24 > -2.2) & (btc_4 > -1.2)
         
-        # Strict Matrix Profile Spring Match (Distance <= 0.42)
         is_strict_motif_match = (
             (df['motif_distance'] <= 0.42) & 
             (df['close'] < df['bb_lower'] * 1.002) & 
             (df['tbv_ratio'] >= 0.48) & 
             (df['wick_ratio'] >= 0.20)
         )
-        
-        # Cluc & BinHV45 Base
         cond_binh = (
-            (df['lower_40'].shift(1) > 0) &
+            (df['lower_40'].shift(1).fillna(0) > 0) &
             (df['bbdelta'] > df['close'] * 0.008) &
             (df['closedelta'] > df['close'] * 0.0175) &
             (df['tail'] < df['bbdelta'] * 0.25) &
-            (df['close'] < df['lower_40'].shift(1)) &
-            (df['close'] <= df['close'].shift(1))
+            (df['close'] < df['lower_40'].shift(1).fillna(999999)) &
+            (df['close'] <= df['close'].shift(1).fillna(999999))
         )
         cond_cluc = (
             (df['close'] < df['ema_slow']) &
             (df['close'] < 0.988 * df['bb_lower']) &
-            (df['volume'] < (df['vol_mean_30'].shift(1) * 15)) &
+            (df['volume'] < (df['vol_mean_30'].shift(1).fillna(999999) * 15)) &
             ((df['wick_ratio'] >= 0.18) | (df['tbv_ratio'] >= 0.47))
         )
-        
         df['is_candidate'] = ((is_strict_motif_match | cond_binh | cond_cluc) & is_btc_safe).astype(int)
         
-        # Pattern Invariance Alpha Score
-        motif_affinity = np.maximum(1.0 - df['motif_distance'], 0.0)
-        disloc_depth = np.maximum((df['bb_lower'] - df['close']) / df['close'] * 100.0, 0.0)
+        # Master Cross-Sectional Resonance Score
+        motif_score = np.maximum(1.0 - df['motif_distance'], 0.0) * 30.0
+        kyle_score = np.clip(df['lambda_z'].fillna(0) * 10.0, -10.0, 30.0)
+        ofi_score = np.clip(df['ofi'].fillna(0) * 30.0, -15.0, 30.0)
+        te_score = np.clip(df['te_proxy'].fillna(0) * 10.0, -10.0, 20.0)
         
-        df['pattern_alpha_score'] = (
-            (motif_affinity * 40.0) +
-            (df['tbv_ratio'] * 30.0) +
-            (df['wick_ratio'] * 20.0) +
-            (disloc_depth * 10.0)
-        )
-        
+        df['cross_resonance_score'] = motif_score + kyle_score + ofi_score + te_score
         df['exit_long'] = (df['close'] > df['bb_mid']).astype(int)
         return df
