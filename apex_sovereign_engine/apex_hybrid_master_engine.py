@@ -1,15 +1,15 @@
 """
 ====================================================================================================
-      🌌 APEX CROSS-SECTIONAL WHALE RESONANCE & MOTIF ENGINE (CS-WRE v2.0)
+      🌌 APEX MULTIFRACTAL FISHER WHALE SINGULARITY ENGINE (AMF-WSE v3.0)
       
-      State-of-the-Art Cross-Sectional Microstructure Asset Selection & Pattern Discovery:
-      1. Dynamic Cross-Sectional Scanner across 27+ Diverse Cryptocurrencies
-      2. Kyle Microstructure Elasticity Tension (Lambda)
-      3. Cross-Sectional Order Flow Imbalance (OFI) Asymmetry
-      4. Directional Lead-Lag Transfer Entropy (BTC -> Altcoin)
-      5. Vectorized Z-Normalized Matrix Profile Euclidean Distance Matching
+      State-of-the-Art Mathematical Secrets for Detecting Explosive Breakouts (2025-2026):
+      1. Multifractal Singularity Spectrum Width (Delta Alpha / Local Holder Exponent Shift)
+      2. Fisher Information Metric Phase Transition (Non-Equilibrium Order Flow Transition)
+      3. Kyle-Obizhaeva Invariant Microstructure Elasticity (Lambda_KO)
+      4. Vectorized Z-Normalized Matrix Profile Euclidean Distance Matching
+      5. Directional Transfer Entropy from BTC Reversal Leads
       6. 3-Tier Dynamic Parabolic Profit Lock (+0.5% at +1.6%, +1.6% at +3.0%, +3.0% at +4.8%, Target +5.5%)
-      7. Pure Spot 1x Cash (100% Halal, 0 Leverage, 0 MB Internet Data)
+      7. Spot 1x Pure Cash (100% Halal, 0 Leverage, 0 Shorting, 0 CFDs)
 ====================================================================================================
 """
 
@@ -18,8 +18,8 @@ import pandas as pd
 from numpy.lib.stride_tricks import sliding_window_view
 from typing import Dict, Any, List, Tuple
 
-ARCHETYPE_SHAPE = np.array([1.2, 0.6, 0.0, -0.8, -1.4, -1.6, -1.5, -1.4, -1.0, -0.4, 0.2, 0.8])
-ARCHETYPE_ZNORM = (ARCHETYPE_SHAPE - np.mean(ARCHETYPE_SHAPE)) / np.std(ARCHETYPE_SHAPE)
+ARCHETYPE_12 = np.array([1.2, 0.6, 0.0, -0.8, -1.4, -1.6, -1.5, -1.4, -1.0, -0.4, 0.2, 0.8])
+ARCH_12_ZNORM = (ARCHETYPE_12 - np.mean(ARCHETYPE_12)) / np.std(ARCHETYPE_12)
 
 class ApexSovereignMasterEngine:
     def __init__(self, initial_capital: float = 1000.0, max_slots: int = 3):
@@ -60,7 +60,7 @@ class ApexSovereignMasterEngine:
         return df_5m
 
     @staticmethod
-    def calculate_cross_sectional_indicators(df_5m: pd.DataFrame, df_btc_5m: pd.DataFrame) -> pd.DataFrame:
+    def calculate_multifractal_fisher_indicators(df_5m: pd.DataFrame, df_btc_5m: pd.DataFrame) -> pd.DataFrame:
         df = df_5m.merge(df_btc_5m, on="open_time", how="inner")
         
         # 1. Bollinger Bands & Moving Averages
@@ -71,7 +71,7 @@ class ApexSovereignMasterEngine:
         df['ema_slow'] = df['close'].ewm(span=50, adjust=False).mean()
         df['vol_mean_30'] = df['volume'].rolling(30, min_periods=5).mean().fillna(1.0)
         
-        # 2. Vectorized Matrix Profile
+        # 2. Vectorized Matrix Profile Motif Matching
         c_vals = df['close'].values
         n_bars = len(c_vals)
         motif_dist = np.full(n_bars, 99.0)
@@ -80,34 +80,44 @@ class ApexSovereignMasterEngine:
             means = np.mean(windows, axis=1, keepdims=True)
             stds = np.std(windows, axis=1, keepdims=True) + 1e-8
             znorms = (windows - means) / stds
-            dists = np.sqrt(np.mean((znorms - ARCHETYPE_ZNORM) ** 2, axis=1))
+            dists = np.sqrt(np.mean((znorms - ARCH_12_ZNORM) ** 2, axis=1))
             motif_dist[11:] = dists
         df['motif_distance'] = motif_dist
         
-        # 3. Kyle Elasticity Lambda
-        ret_abs = (df['close'].pct_change()).abs().fillna(0)
-        vol_sqrt = np.sqrt(df['volume'] + 1e-6)
+        # 3. Multifractal Singularity Spectrum Width Proxy
+        log_ret = np.log(df['close'] / df['close'].shift(1)).fillna(0)
+        rolling_std_6 = log_ret.rolling(6, min_periods=3).std().fillna(1e-4)
+        rolling_std_24 = log_ret.rolling(24, min_periods=6).std().fillna(1e-4) + 1e-6
+        df['multifractal_spectrum_width'] = (rolling_std_6 / rolling_std_24).clip(0.1, 5.0)
+        
+        # 4. Fisher Information Metric Phase Transition
+        df['fisher_info'] = 1.0 / (rolling_std_6**2 + 1e-6)
+        fisher_mean = df['fisher_info'].rolling(48, min_periods=5).mean().fillna(0)
+        fisher_std = df['fisher_info'].rolling(48, min_periods=5).std().fillna(1.0) + 1e-6
+        df['fisher_z'] = ((df['fisher_info'] - fisher_mean) / fisher_std).clip(-3.0, 5.0)
+        
+        # 5. Kyle-Obizhaeva Invariant Microstructure Elasticity
+        adv_approx = df['volume'].rolling(288, min_periods=10).mean().fillna(1.0) + 1e-6
+        vol_impact_term = (df['volume'] / adv_approx) ** (1.0 / 3.0)
         candle_range = (df['high'] - df['low']) / (df['close'] + 1e-6) + 1e-6
-        df['kyle_lambda'] = ret_abs / (vol_sqrt * candle_range + 1e-8)
-        lam_mean = df['kyle_lambda'].rolling(24, min_periods=5).mean().fillna(0)
-        lam_std = df['kyle_lambda'].rolling(24, min_periods=5).std().fillna(1.0) + 1e-6
-        df['lambda_z'] = (df['kyle_lambda'] - lam_mean) / lam_std
+        df['kyle_obizhaeva'] = candle_range / (vol_impact_term * (bb_std / df['close']) + 1e-6)
+        ko_mean = df['kyle_obizhaeva'].rolling(48, min_periods=5).mean().fillna(0)
+        ko_std = df['kyle_obizhaeva'].rolling(48, min_periods=5).std().fillna(1.0) + 1e-6
+        df['ko_z'] = ((df['kyle_obizhaeva'] - ko_mean) / ko_std).clip(-3.0, 5.0)
         
-        # 4. OFI Asymmetry
-        df['ofi'] = (df['taker_buy'] - df['taker_sell']) / (df['volume'] + 1e-6)
-        
-        # 5. Microstructure Lower Wick Absorption
+        # 6. Microstructure Order Flow & Lower Wick Absorption
         lower_wick = np.minimum(df['open'], df['close']) - df['low']
         df['wick_ratio'] = lower_wick / (df['high'] - df['low'] + 1e-6)
+        df['ofi'] = (df['taker_buy'] - df['taker_sell']) / (df['volume'] + 1e-6)
         
-        # 6. Directional Transfer Entropy Proxy
+        # 7. Directional Transfer Entropy from BTC
         btc_ret = df['btc_c'].pct_change().fillna(0)
         alt_ret = df['close'].pct_change().fillna(0)
         alt_std = alt_ret.rolling(24, min_periods=5).std().fillna(1.0) + 1e-6
         btc_std = btc_ret.rolling(24, min_periods=5).std().fillna(1.0) + 1e-6
         df['te_proxy'] = (alt_ret * btc_ret.shift(1)).rolling(24, min_periods=5).mean().fillna(0) / (alt_std * btc_std)
         
-        # 7. BinHV45 Metrics
+        # 8. BinHV45 Metrics
         rolling_mean_40 = df['close'].rolling(40, min_periods=5).mean()
         rolling_std_40 = df['close'].rolling(40, min_periods=5).std().fillna(1e-4)
         df['lower_40'] = rolling_mean_40 - (rolling_std_40 * 2)
@@ -142,12 +152,13 @@ class ApexSovereignMasterEngine:
         )
         df['is_candidate'] = ((is_strict_motif_match | cond_binh | cond_cluc) & is_btc_safe).astype(int)
         
-        # Master Cross-Sectional Resonance Score
-        motif_score = np.maximum(1.0 - df['motif_distance'], 0.0) * 30.0
-        kyle_score = np.clip(df['lambda_z'].fillna(0) * 10.0, -10.0, 30.0)
-        ofi_score = np.clip(df['ofi'].fillna(0) * 30.0, -15.0, 30.0)
-        te_score = np.clip(df['te_proxy'].fillna(0) * 10.0, -10.0, 20.0)
+        # Unified Explosion Rank Alpha Score
+        motif_score = np.maximum(1.0 - df['motif_distance'], 0.0) * 25.0
+        fisher_score = np.clip(df['fisher_z'].fillna(0) * 10.0, -10.0, 25.0)
+        ko_score = np.clip(df['ko_z'].fillna(0) * 10.0, -10.0, 25.0)
+        ofi_score = np.clip(df['ofi'].fillna(0) * 25.0, -15.0, 25.0)
+        te_score = np.clip(df['te_proxy'].fillna(0) * 10.0, -10.0, 15.0)
         
-        df['cross_resonance_score'] = motif_score + kyle_score + ofi_score + te_score
+        df['explosion_alpha_score'] = motif_score + fisher_score + ko_score + ofi_score + te_score
         df['exit_long'] = (df['close'] > df['bb_mid']).astype(int)
         return df
