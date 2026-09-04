@@ -131,7 +131,7 @@ class ApexSovereignMasterEngine:
         is_btc_safe = (btc_24 > -2.2) & (btc_4 > -1.2)
         
         is_strict_motif_match = (
-            (df['motif_distance'] <= 0.42) & 
+            (df['motif_distance'] <= 0.45) & 
             (df['close'] < df['bb_lower'] * 1.002) & 
             (df['tbv_ratio'] >= 0.48) & 
             (df['wick_ratio'] >= 0.20)
@@ -146,7 +146,7 @@ class ApexSovereignMasterEngine:
         )
         cond_cluc = (
             (df['close'] < df['ema_slow']) &
-            (df['close'] < 0.988 * df['bb_lower']) &
+            (df['close'] < 0.992 * df['bb_lower']) &
             (df['volume'] < (df['vol_mean_30'].shift(1).fillna(999999) * 15)) &
             ((df['wick_ratio'] >= 0.18) | (df['tbv_ratio'] >= 0.47))
         )
