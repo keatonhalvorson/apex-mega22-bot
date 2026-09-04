@@ -1,14 +1,14 @@
 """
 ====================================================================================================
-      🌌 APEX MULTIFRACTAL FISHER WHALE SINGULARITY ENGINE (AMF-WSE v3.0)
+      🌌 APEX MULTIFRACTAL FISHER WHALE SINGULARITY ENGINE (AMF-WSE v3.1 - RUNNER HARVESTER)
       
-      State-of-the-Art Mathematical Secrets for Detecting Explosive Breakouts (2025-2026):
+      State-of-the-Art Non-Equilibrium Microstructure & Information Geometry Engine:
       1. Multifractal Singularity Spectrum Width (Delta Alpha / Local Holder Exponent Shift)
       2. Fisher Information Metric Phase Transition (Non-Equilibrium Order Flow Transition)
       3. Kyle-Obizhaeva Invariant Microstructure Elasticity (Lambda_KO)
       4. Vectorized Z-Normalized Matrix Profile Euclidean Distance Matching
       5. Directional Transfer Entropy from BTC Reversal Leads
-      6. 3-Tier Dynamic Parabolic Profit Lock (+0.5% at +1.6%, +1.6% at +3.0%, +3.0% at +4.8%, Target +5.5%)
+      6. 4-Tier Asymmetric Parabolic Profit Lock (+0.5% at +1.6%, +1.8% at +3.0%, +3.5% at +4.8%, Target +6.5%)
       7. Spot 1x Pure Cash (100% Halal, 0 Leverage, 0 Shorting, 0 CFDs)
 ====================================================================================================
 """
