@@ -158,7 +158,9 @@ class ApexSovereignMasterEngine:
         ko_score = np.clip(df['ko_z'].fillna(0) * 10.0, -10.0, 25.0)
         ofi_score = np.clip(df['ofi'].fillna(0) * 25.0, -15.0, 25.0)
         te_score = np.clip(df['te_proxy'].fillna(0) * 10.0, -10.0, 15.0)
-        
         df['explosion_alpha_score'] = motif_score + fisher_score + ko_score + ofi_score + te_score
         df['exit_long'] = (df['close'] > df['bb_mid']).astype(int)
         return df
+
+    # Backwards compatibility alias
+    calculate_cross_sectional_indicators = calculate_multifractal_fisher_indicators

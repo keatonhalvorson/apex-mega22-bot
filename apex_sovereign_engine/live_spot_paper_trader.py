@@ -117,24 +117,73 @@ def scan_entire_binance_market():
         try:
             df_1m = fetch_klines_1m(sym, limit=150)
             df_5m = ApexSovereignMasterEngine.resample_5m(df_1m)
-            df_ind = ApexSovereignMasterEngine.calculate_cross_sectional_indicators(df_5m, df_btc_5m)
+            df_ind = ApexSovereignMasterEngine.calculate_multifractal_fisher_indicators(df_5m, df_btc_5m)
             
             last_row = df_ind.iloc[-1]
-            score = last_row["cross_resonance_score"]
-            is_cand = last_row["is_candidate"]
-            cur_price = last_row["close"]
-            motif_dist = last_row["motif_distance"]
+            score = float(last_row.get("explosion_alpha_score", last_row.get("cross_resonance_score", 0.0)))
+            is_cand = int(last_row.get("is_candidate", 0))
+            cur_price = float(last_row.get("close", 0.0))
+            motif_dist = float(last_row.get("motif_distance", 99.0))
+            fisher_z = float(last_row.get("fisher_z", 0.0))
+            ko_z = float(last_row.get("ko_z", 0.0))
+            ofi = float(last_row.get("ofi", 0.0))
             
-            deep_ranked.append((sym, cur_price, motif_dist, score, is_cand))
+            deep_ranked.append({
+                "sym": sym, "price": cur_price, "motif_dist": motif_dist,
+                "score": score, "is_cand": is_cand, "fisher_z": fisher_z,
+                "ko_z": ko_z, "ofi": ofi, "vol_m": vol / 1e6
+            })
         except Exception:
             continue
             
-    deep_ranked.sort(key=lambda x: x[3], reverse=True)
+    deep_ranked.sort(key=lambda x: x["score"], reverse=True)
     
     logger.info("--- 🎯 REAL-TIME MATRIX PROFILE & WHALE RESONANCE SIGNALS ---")
-    for sym, px, dist, score, is_cand in deep_ranked[:8]:
-        status_str = "🚀 EXPLOSIVE CANDIDATE TRIGGERED" if is_cand == 1 else "SCANNING"
-        logger.info(f"  • {sym:12s} | Price: ${px:<10.4f} | Motif Dist: {dist:0.3f} | Score: {score:0.2f} | Status: {status_str}")
+    for item in deep_ranked[:8]:
+        status_str = "🚀 EXPLOSIVE CANDIDATE TRIGGERED" if item["is_cand"] == 1 else "SCANNING"
+        logger.info(f"  • {item['sym']:12s} | Price: ${item['price']:<10.4f} | Motif: {item['motif_dist']:0.3f} | Fisher_Z: {item['fisher_z']:+0.2f} | Score: {item['score']:0.2f} | Status: {status_str}")
+
+    # Check if any explosive candidate was triggered or if --ai-brief requested
+    if "--ai-brief" in sys.argv and deep_ranked:
+        generate_glm_intelligence_brief(deep_ranked[:3], btc_price, btc_4h)
+
+def generate_glm_intelligence_brief(top_cands: list, btc_px: float, btc_4h: float):
+    """
+    On-Demand Institutional AI Advisor powered by GLM-5.3-Flash
+    Provides a concise, mathematically grounded Arabic intelligence briefing.
+    """
+    logger.info("🧠 Generating Institutional AI Whale Intelligence Brief via GLM-5.3-Flash...")
+    try:
+        from openai import OpenAI
+        client = OpenAI(
+            base_url="https://preview-chat-afb4efca-e3b4-4c60-bfb3-ff31d90c7d12.space-z.ai/api/provider/v1",
+            api_key="sk-YzGNsUOlaoZS6mccbRefsxdjDREY43VJ",
+        )
+        
+        prompt = f"""أنت المستشار الكمي وكبير محللي حركة السيولة المؤسسية (Whale Order Flow Specialist).
+إليك قراءات مصفوفة الفيزياء المجهرية الفورية من منصة بايننس:
+- سعر البيتكوين: ${btc_px:,.2f} (زخم 4 ساعات: {btc_4h:+0.2f}%)
+- العملات الأعلى توتراً وتجميعاً للحيتان:
+"""
+        for c in top_cands:
+            prompt += f"• العملة: {c['sym']} | السعر: ${c['price']} | مسافة النمط الهندسي: {c['motif_dist']:.3f} | انتقال فيشر: {c['fisher_z']:+.2f} | مرونة كايل: {c['ko_z']:+.2f} | اختلال الأوامر: {c['ofi']:+.2f} | الحجم: ${c['vol_m']:.1f}M\n"
+
+        prompt += "\nالمطلوب: قدم ملخصاً استخباراتياً موجزاً ودقيقاً باللغة العربية يوضح أين يركز كبار الأموال سيولتهم حالياً، وما هي العملة الأكثر جاهزية للانفجار مع ذكر السبب الرياضي باختصار."
+        
+        resp = client.chat.completions.create(
+            model="glm-5.3-flash",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=350,
+            temperature=0.3,
+        )
+        brief = resp.choices[0].message.content
+        print("\n" + "="*70)
+        print("🏛️ تقرير الذكاء الاصطناعي المؤسسي لرصد الحيتان (GLM-5.3-Flash):")
+        print("="*70)
+        print(brief)
+        print("="*70 + "\n")
+    except Exception as e:
+        logger.warning(f"AI Briefing error: {e}")
 
 if __name__ == "__main__":
     scan_entire_binance_market()
