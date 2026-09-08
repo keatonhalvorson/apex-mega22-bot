@@ -130,6 +130,13 @@ class ApexSovereignMasterEngine:
         btc_4 = df['btc_4h'].fillna(0)
         is_btc_safe = (btc_24 > -2.2) & (btc_4 > -1.2)
         
+        # Liquidation Cascade & Falling Knife Pre-Crash Shield
+        is_falling_knife = (
+            (df['close'] < df['close'].shift(1)) & 
+            (df['tbv_ratio'] < 0.28) & 
+            (df['wick_ratio'] < 0.18)
+        )
+        
         is_strict_motif_match = (
             (df['motif_distance'] <= 0.45) & 
             (df['close'] < df['bb_lower'] * 1.002) & 
@@ -150,7 +157,12 @@ class ApexSovereignMasterEngine:
             (df['volume'] < (df['vol_mean_30'].shift(1).fillna(999999) * 15)) &
             ((df['wick_ratio'] >= 0.18) | (df['tbv_ratio'] >= 0.47))
         )
-        df['is_candidate'] = ((is_strict_motif_match | cond_binh | cond_cluc) & is_btc_safe).astype(int)
+        # Entry filtered: Must NOT be an active liquidation falling knife
+        df['is_candidate'] = (
+            (is_strict_motif_match | cond_binh | cond_cluc) & 
+            ~is_falling_knife & 
+            is_btc_safe
+        ).astype(int)
         
         # Unified Explosion Rank Alpha Score
         motif_score = np.maximum(1.0 - df['motif_distance'], 0.0) * 25.0
