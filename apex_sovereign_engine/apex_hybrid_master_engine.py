@@ -60,7 +60,24 @@ class ApexSovereignMasterEngine:
         return df_5m
 
     @staticmethod
+    def compute_btc_hawkes(df_btc_5m: pd.DataFrame, alpha: float = 0.6, beta: float = 0.8) -> pd.DataFrame:
+        """Hawkes Self-Exciting Cascading Shock Intensity for BTC."""
+        rets = df_btc_5m['btc_c'].pct_change().fillna(0).values
+        neg_shocks = np.maximum(-rets, 0) ** 1.3
+        n = len(rets)
+        hawkes = np.zeros(n)
+        decay = np.exp(-beta)
+        h = 0.0
+        for i in range(1, n):
+            h = h * decay + alpha * neg_shocks[i-1] * 100.0
+            hawkes[i] = h
+        df_btc_5m['btc_hawkes'] = hawkes
+        return df_btc_5m
+
+    @staticmethod
     def calculate_multifractal_fisher_indicators(df_5m: pd.DataFrame, df_btc_5m: pd.DataFrame) -> pd.DataFrame:
+        if 'btc_hawkes' not in df_btc_5m.columns:
+            df_btc_5m = ApexSovereignMasterEngine.compute_btc_hawkes(df_btc_5m)
         df = df_5m.merge(df_btc_5m, on="open_time", how="inner")
         
         # 1. Bollinger Bands & Moving Averages
@@ -125,10 +142,11 @@ class ApexSovereignMasterEngine:
         df['closedelta'] = (df['close'] - df['close'].shift()).abs().fillna(0)
         df['tail'] = (df['close'] - df['low']).abs()
         
-        # Macro BTC Safety Gate
+        # Macro BTC Safety Gate with Hawkes Cascade Shield
         btc_24 = df['btc_24h'].fillna(0)
         btc_4 = df['btc_4h'].fillna(0)
-        is_btc_safe = (btc_24 > -2.2) & (btc_4 > -1.2)
+        btc_hawkes = df['btc_hawkes'].fillna(0) if 'btc_hawkes' in df.columns else pd.Series(0.0, index=df.index)
+        is_btc_safe = (btc_24 > -2.2) & (btc_4 > -1.2) & (btc_hawkes <= 0.035)
         
         # Liquidation Cascade & Falling Knife Pre-Crash Shield
         is_falling_knife = (
