@@ -15,6 +15,7 @@ from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Callable
+import urllib.parse
 import aiohttp
 import websockets
 import numpy as np
@@ -66,12 +67,32 @@ class Mega22PaperBot:
         self.candle_buffers: Dict[str, deque] = {s: deque(maxlen=BUFFER_MAX_BARS) for s in ALL_SYMBOLS}
         self.latest_prices: Dict[str, float] = {s: 0.0 for s in ALL_SYMBOLS}
         self.latest_indicators: Dict[str, Dict[str, Any]] = {}
+        self.latest_tickers: Dict[str, Dict[str, Any]] = {
+            s: {
+                "sym": s,
+                "price": 0.0,
+                "prev_price": 0.0,
+                "change_24h": 0.0,
+                "high_24h": 0.0,
+                "low_24h": 0.0,
+                "vol_quote": 0.0,
+                "vol_base": 0.0,
+                "best_bid": 0.0,
+                "best_ask": 0.0,
+                "spread_bps": 0.0,
+                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else "MACRO"),
+                "tick_dir": "flat"
+            } for s in ALL_SYMBOLS
+        }
         
-        # Macro BTC State
+        # Macro BTC State & Hawkes Volatility Radar Buffer
         self.btc_hawkes: float = 0.0
+        self.btc_hawkes_history: deque = deque(maxlen=120)
         self.btc_24h: float = 0.0
         self.btc_4h: float = 0.0
         self.is_btc_safe: bool = True
+        self._cached_stats: Optional[Dict[str, Any]] = None
+        self._cached_trade_count: int = -1
         
         # Event Notification Callbacks
         self.listeners: List[Callable[[str, Dict[str, Any]], None]] = []
@@ -79,6 +100,7 @@ class Mega22PaperBot:
         
         # Bot State
         self.is_running: bool = False
+        self.is_paused: bool = False
         self.last_ws_message_time: float = time.time()
         
         # Multi-Stream Synchronization State
@@ -176,10 +198,13 @@ class Mega22PaperBot:
         return equity
 
     def get_summary_stats(self) -> Dict[str, Any]:
-        """Computes comprehensive quantitative performance metrics."""
+        """Computes comprehensive quantitative performance and risk metrics (cached until trade close/reset)."""
+        if self._cached_stats is not None and self._cached_trade_count == len(self.trade_history):
+            return self._cached_stats
+
         total_trades = len(self.trade_history)
         if total_trades == 0:
-            return {
+            res = {
                 "total_trades": 0,
                 "win_rate": 0.0,
                 "net_profit": 0.0,
@@ -191,8 +216,24 @@ class Mega22PaperBot:
                 "avg_trade_net": 0.0,
                 "best_trade_pnl": 0.0,
                 "worst_trade_pnl": 0.0,
+                "sharpe_ratio": 0.0,
+                "avg_trade_duration_bars": 0.0,
+                "avg_trade_duration_min": 0,
+                "gross_profit": 0.0,
+                "gross_loss": 0.0,
+                "avg_win": 0.0,
+                "avg_loss": 0.0,
+                "payoff_ratio": 0.0,
+                "expectancy_usd": 0.0,
+                "expectancy_pct": 0.0,
+                "max_consecutive_wins": 0,
+                "max_consecutive_losses": 0,
+                "recovery_factor": 0.0,
                 "last_trade": None
             }
+            self._cached_stats = res
+            self._cached_trade_count = 0
+            return res
         
         wins = [t for t in self.trade_history if t.net > 0]
         losses = [t for t in self.trade_history if t.net <= 0]
@@ -207,6 +248,38 @@ class Mega22PaperBot:
         best_pnl = max(t.pnl_pct for t in self.trade_history)
         worst_pnl = min(t.pnl_pct for t in self.trade_history)
 
+        # Durations
+        avg_bars = float(np.mean([t.bars_held for t in self.trade_history]))
+        avg_min = int(round(avg_bars * 5))
+
+        # Win / Loss Averages & Payoff
+        avg_win = (gross_wins / len(wins)) if wins else 0.0
+        avg_loss = (gross_losses / len(losses)) if losses else 0.0
+        payoff = (avg_win / avg_loss) if avg_loss > 0 else 0.0
+
+        # Expectancy
+        expectancy_usd = avg_trade
+        expectancy_pct = float(np.mean([t.pnl_pct for t in self.trade_history]))
+
+        # Consecutive streaks
+        cur_w, cur_l, max_w, max_l = 0, 0, 0, 0
+        for t in self.trade_history:
+            if t.net > 0:
+                cur_w += 1
+                cur_l = 0
+                max_w = max(max_w, cur_w)
+            else:
+                cur_l += 1
+                cur_w = 0
+                max_l = max(max_l, cur_l)
+
+        # Sharpe Ratio (annualized on trade returns)
+        pnl_pcts = np.array([t.pnl_pct / 100.0 for t in self.trade_history])
+        std_pnl = float(np.std(pnl_pcts))
+        # Annualization factor for ~500 trades/year typical of Mega-22 strategy
+        annual_factor = np.sqrt(500.0)
+        sharpe = float((np.mean(pnl_pcts) / std_pnl) * annual_factor) if std_pnl > 1e-6 else 0.0
+
         # Trade-level closed-equity drawdown
         cum_equity = [INITIAL_CAPITAL]
         eq = INITIAL_CAPITAL
@@ -216,10 +289,12 @@ class Mega22PaperBot:
         peaks = np.maximum.accumulate(cum_equity)
         dds = (np.array(cum_equity) - peaks) / peaks * 100.0
         max_dd = abs(float(np.min(dds))) if len(dds) > 0 else 0.0
+        max_dd_usd = abs(float(np.min(np.array(cum_equity) - peaks))) if len(peaks) > 0 else 0.0
+        recovery_factor = (tot_net / max_dd_usd) if max_dd_usd > 1.0 else (tot_net if tot_net > 0 else 0.0)
 
         last_t = self.trade_history[-1].to_dict() if self.trade_history else None
 
-        return {
+        res = {
             "total_trades": total_trades,
             "win_rate": round(win_rate, 1),
             "net_profit": round(tot_net, 2),
@@ -231,8 +306,24 @@ class Mega22PaperBot:
             "avg_trade_net": round(avg_trade, 2),
             "best_trade_pnl": round(best_pnl, 2),
             "worst_trade_pnl": round(worst_pnl, 2),
+            "sharpe_ratio": round(sharpe, 2),
+            "avg_trade_duration_bars": round(avg_bars, 1),
+            "avg_trade_duration_min": avg_min,
+            "gross_profit": round(gross_wins, 2),
+            "gross_loss": round(gross_losses, 2),
+            "avg_win": round(avg_win, 2),
+            "avg_loss": round(avg_loss, 2),
+            "payoff_ratio": round(payoff, 2),
+            "expectancy_usd": round(expectancy_usd, 2),
+            "expectancy_pct": round(expectancy_pct, 2),
+            "max_consecutive_wins": max_w,
+            "max_consecutive_losses": max_l,
+            "recovery_factor": round(recovery_factor, 2),
             "last_trade": last_t
         }
+        self._cached_stats = res
+        self._cached_trade_count = total_trades
+        return res
 
     async def bootstrap_historical_klines(self):
         """
@@ -257,6 +348,61 @@ class Mega22PaperBot:
                     self.log_event(f"Warning: Failed initial bootstrap for {sym}: {res}", "WARNING")
                     
             self.log_event(f"✅ Market Bootstrap Completed: {successful}/{len(ALL_SYMBOLS)} pairs primed with live history.")
+            
+            # Concurrently fetch 24hr ticker stats for all symbols via filtered query
+            try:
+                symbols_param = json.dumps(ALL_SYMBOLS, separators=(',', ':'))
+                encoded_symbols = urllib.parse.quote(symbols_param)
+                for base in BINANCE_REST_URLS:
+                    url = f"{base}/api/v3/ticker/24hr?symbols={encoded_symbols}"
+                    try:
+                        async with session.get(url) as resp:
+                            if resp.status == 200:
+                                raw_tickers = await resp.json()
+                            else:
+                                async with session.get(f"{base}/api/v3/ticker/24hr") as resp_all:
+                                    raw_tickers = await resp_all.json() if resp_all.status == 200 else []
+                            
+                            if raw_tickers:
+                                for td in raw_tickers:
+                                    s = td.get('symbol')
+                                    if s in ALL_SYMBOLS:
+                                        c = float(td.get('lastPrice', td.get('c', 0.0)))
+                                        p = float(td.get('priceChange', td.get('p', 0.0)))
+                                        P = float(td.get('priceChangePercent', td.get('P', 0.0)))
+                                        h = float(td.get('highPrice', td.get('h', c)))
+                                        l = float(td.get('lowPrice', td.get('l', c)))
+                                        v = float(td.get('volume', td.get('v', 0.0)))
+                                        q = float(td.get('quoteVolume', td.get('q', 0.0)))
+                                        b = float(td.get('bidPrice', td.get('b', c)))
+                                        a = float(td.get('askPrice', td.get('a', c)))
+                                        spread = ((a - b) / c * 10000.0) if c > 0 else 0.0
+                                        group = "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else "MACRO")
+                                        
+                                        self.latest_prices[s] = c
+                                        self.latest_tickers[s] = {
+                                            'sym': s,
+                                            'price': c,
+                                            'prev_price': c,
+                                            'tick_dir': 'flat',
+                                            'price_change_24h': p,
+                                            'change_24h': P,
+                                            'high_24h': h,
+                                            'low_24h': l,
+                                            'vol_base': v,
+                                            'vol_quote': q,
+                                            'best_bid': b,
+                                            'best_ask': a,
+                                            'spread_bps': round(spread, 1),
+                                            'group': group,
+                                            'last_update': time.time()
+                                        }
+                                break
+                    except Exception:
+                        continue
+            except Exception as e:
+                logger.debug(f"Ticker bootstrap notice: {e}")
+                
             self.update_all_indicators()
 
     async def _fetch_symbol_klines(self, session: aiohttp.ClientSession, symbol: str) -> List[Dict[str, Any]]:
@@ -313,9 +459,29 @@ class Mega22PaperBot:
         
         last_btc = df_btc_5m.iloc[-1]
         self.btc_hawkes = float(last_btc['btc_hawkes'])
-        self.btc_24h = float(last_btc['btc_24h']) if not pd.isna(last_btc['btc_24h']) else 0.0
+        fallback_24h = self.latest_tickers.get(MACRO_SYMBOL, {}).get('change_24h', 0.0)
+        self.btc_24h = float(last_btc['btc_24h']) if not pd.isna(last_btc['btc_24h']) else fallback_24h
         self.btc_4h = float(last_btc['btc_4h']) if not pd.isna(last_btc['btc_4h']) else 0.0
         self.is_btc_safe = (self.btc_24h > BTC_24H_MIN_PCT) and (self.btc_4h > BTC_4H_MIN_PCT) and (self.btc_hawkes <= BTC_HAWKES_MAX_INTENSITY)
+        
+        # Populate or append to btc_hawkes_history for Hawkes Volatility Radar
+        if len(self.btc_hawkes_history) < 20 and len(df_btc_5m) >= 20:
+            self.btc_hawkes_history.clear()
+            for _, r in df_btc_5m.tail(60).iterrows():
+                t_str = pd.to_datetime(r['open_time']).strftime("%H:%M")
+                self.btc_hawkes_history.append({
+                    "time": t_str,
+                    "intensity": round(float(r['btc_hawkes']), 4),
+                    "btc_price": round(float(r['btc_c']), 2)
+                })
+        else:
+            t_str = pd.to_datetime(last_btc['open_time']).strftime("%H:%M")
+            if not self.btc_hawkes_history or self.btc_hawkes_history[-1]["time"] != t_str:
+                self.btc_hawkes_history.append({
+                    "time": t_str,
+                    "intensity": round(self.btc_hawkes, 4),
+                    "btc_price": round(float(last_btc['btc_c']), 2)
+                })
         
         for sym in MEGA_22:
             df_alt = self._df_from_buffer(sym)
@@ -341,6 +507,98 @@ class Mega22PaperBot:
                 }
             except Exception as e:
                 logger.debug(f"Indicator calculation skipped for {sym}: {e}")
+
+    def on_ticker_update(self, symbol: str, data: Dict[str, Any]):
+        """
+        Sub-second real-time tick processor from Binance @ticker stream.
+        Updates prices, 24h metrics, bid/ask depth, evaluates active positions, and broadcasts ticks.
+        """
+        if not symbol:
+            return
+        c = float(data.get('c', 0.0))
+        if c <= 0:
+            return
+            
+        old_px = self.latest_prices.get(symbol, c)
+        if c > old_px:
+            tick_dir = "up"
+        elif c < old_px:
+            tick_dir = "down"
+        else:
+            tick_dir = "flat"
+            
+        self.latest_prices[symbol] = c
+        
+        h = float(data.get('h', c))
+        l = float(data.get('l', c))
+        p = float(data.get('p', 0.0))
+        P = float(data.get('P', 0.0))
+        v = float(data.get('v', 0.0))
+        q = float(data.get('q', 0.0))
+        b = float(data.get('b', c))
+        a = float(data.get('a', c))
+        spread_bps = ((a - b) / c * 10000.0) if c > 0 else 0.0
+
+        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else "MACRO")
+
+        self.latest_tickers[symbol] = {
+            'sym': symbol,
+            'price': c,
+            'prev_price': old_px,
+            'tick_dir': tick_dir,
+            'price_change_24h': p,
+            'change_24h': P,
+            'high_24h': h,
+            'low_24h': l,
+            'vol_base': v,
+            'vol_quote': q,
+            'best_bid': b,
+            'best_ask': a,
+            'spread_bps': round(spread_bps, 1),
+            'group': group,
+            'last_update': time.time()
+        }
+        
+        if symbol == MACRO_SYMBOL:
+            self.btc_24h = P
+
+        # If active position, update mark price and test dynamic exits with live tick price c
+        if symbol in self.active_positions:
+            pos = self.active_positions[symbol]
+            pos.current_px = c
+            pos.highest_seen = max(pos.highest_seen, c)
+            pos.lowest_seen = min(pos.lowest_seen, c) if pos.lowest_seen > 0 else c
+            pos.unrealized_pnl = (c - pos.px) / pos.px * pos.notional
+            pos.unrealized_pnl_pct = (c / pos.px - 1.0) * 100.0
+            
+            # Immediately evaluate dynamic profit lock, trailing ratchet, or stop loss with live tick price c
+            self.on_tick_update(symbol, c, c, c)
+            
+        # Broadcast tick event for instantaneous UI flash & floating PnL update
+        pos_d = self.active_positions[symbol].to_dict() if symbol in self.active_positions else None
+        equity = self.get_total_equity()
+        total_pnl = equity - INITIAL_CAPITAL
+        roe_pct = (total_pnl / INITIAL_CAPITAL) * 100.0
+        tick_payload = {
+            "sym": symbol,
+            "price": c,
+            "prev_price": old_px,
+            "tick_dir": tick_dir,
+            "change_24h": P,
+            "high_24h": h,
+            "low_24h": l,
+            "vol_quote": q,
+            "best_bid": b,
+            "best_ask": a,
+            "spread_bps": round(spread_bps, 1),
+            "group": group,
+            "pos": pos_d,
+            "equity": round(equity, 2),
+            "net_profit": round(total_pnl, 2),
+            "roe_pct": round(roe_pct, 2),
+            "unrealized_pnl": round(sum(p.unrealized_pnl for p in self.active_positions.values()), 2)
+        }
+        self._broadcast("tick", tick_payload)
 
     def on_tick_update(self, symbol: str, current_px: float, high_px: float, low_px: float):
         """
@@ -491,6 +749,7 @@ class Mega22PaperBot:
             cap_after=self.get_total_equity()
         )
         self.trade_history.append(trade)
+        self._cached_stats = None
         
         emoji = "🎯" if net > 0 else "🛑"
         self.log_event(f"{emoji} CLOSED {symbol} via {reason} | PnL: {pnl_pct:+.2f}% (${net:+.2f}) | Cash: ${self.available_cash:.2f}")
@@ -498,11 +757,38 @@ class Mega22PaperBot:
         self._save_journal()
         self._broadcast("trade_closed", trade.to_dict())
 
+    def pause_trading(self) -> bool:
+        """Pause automated trade entry (existing positions remain actively managed)."""
+        self.is_paused = True
+        self.log_event("⏸️ Trading PAUSED by operator. No new positions will be opened.", "WARNING")
+        self._broadcast("status_change", {"is_paused": True})
+        return True
+
+    def resume_trading(self) -> bool:
+        """Resume automated trade entry."""
+        self.is_paused = False
+        self.log_event("▶️ Trading RESUMED by operator. Scanning Mega-22 universe for entries.", "INFO")
+        self._broadcast("status_change", {"is_paused": False})
+        return True
+
+    def emergency_close_all(self) -> List[str]:
+        """Emergency liquidate all open positions at market."""
+        closed = []
+        for sym in list(self.active_positions.keys()):
+            curr_px = self.latest_prices.get(sym, self.active_positions[sym].px)
+            exit_px = curr_px * (1.0 - SLIPPAGE_RATE)
+            self._execute_position_close(sym, exit_px, "EMERGENCY_CLOSE_ALL")
+            closed.append(sym)
+        self.log_event(f"🚨 EMERGENCY CLOSE ALL: Closed {len(closed)} open positions.", "WARNING")
+        return closed
+
     def _evaluate_portfolio_entries(self):
         """
         Evaluates top-ranked candidates across all 22 coins and executes entries.
         Matches exact logic of simulate_engine_rigorous lines 187-208.
         """
+        if self.is_paused:
+            return
         if len(self.active_positions) >= MAX_SLOTS:
             return
         if self.bar_index <= self.stoploss_guard_until:
@@ -562,6 +848,7 @@ class Mega22PaperBot:
         self.bar_index = 0
         self.active_positions.clear()
         self.trade_history.clear()
+        self._cached_stats = None
         self.consecutive_stops = 0
         self.stoploss_guard_until = -1
         self.cooldowns = {s: -1 for s in MEGA_22}
@@ -576,14 +863,18 @@ class Mega22PaperBot:
 
     async def run(self):
         """
-        Main async event loop: connects to Binance WebSocket and processes real-time klines.
+        Main async event loop: connects to Binance WebSocket and processes real-time klines and tickers.
         Includes auto-reconnect and watchdog timer.
         """
         self.is_running = True
         await self.bootstrap_historical_klines()
         
-        streams = "/".join([f"{s.lower()}@kline_5m" for s in ALL_SYMBOLS])
-        ws_url = f"{BINANCE_WS_URL}?streams={streams}"
+        streams = []
+        for s in ALL_SYMBOLS:
+            sl = s.lower()
+            streams.append(f"{sl}@kline_5m")
+            streams.append(f"{sl}@ticker")
+        ws_url = f"{BINANCE_WS_URL}?streams={'/'.join(streams)}"
         
         while self.is_running:
             try:
@@ -592,43 +883,52 @@ class Mega22PaperBot:
                     self.log_event("🔄 Re-syncing 300 bars per pair via REST after stream interruption...")
                     await self.bootstrap_historical_klines()
 
-                self.log_event(f"🔌 Connecting to Binance Stream ({len(ALL_SYMBOLS)} pairs)...")
+                self.log_event(f"🔌 Connecting to Binance Multi-Stream ({len(streams)} feeds: 5m klines + sub-second L2 tickers)...")
                 async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
-                    self.log_event("🟢 Live WebSocket Connected. Receiving Real-Time Market Ticks.")
+                    self.log_event("🟢 Live Binance Spot WebSocket Connected. Sub-second price streaming active.")
                     while self.is_running:
                         msg = await ws.recv()
                         self.last_ws_message_time = time.time()
                         data = json.loads(msg)
-                        k = data.get('data', {}).get('k', {})
-                        if not k:
+                        stream = data.get('stream', '')
+                        payload = data.get('data', {})
+                        if not payload:
                             continue
                             
-                        sym = k['s']
-                        c = float(k['c'])
-                        h = float(k['h'])
-                        l = float(k['l'])
-                        is_closed = k['x']
-                        
-                        # Process real-time tick
-                        self.on_tick_update(sym, c, h, l)
-                        
-                        # Process closed candle
-                        if is_closed:
-                            vol = float(k['v'])
-                            tb = float(k['V'])
-                            ts = max(vol - tb, 1e-6)
-                            bar = {
-                                'open_time': pd.to_datetime(k['t'], unit='ms'),
-                                'open': float(k['o']),
-                                'high': h,
-                                'low': l,
-                                'close': c,
-                                'volume': vol,
-                                'taker_buy': tb,
-                                'taker_sell': ts,
-                                'tbv_ratio': tb / max(vol, 1e-6)
-                            }
-                            await self.on_candle_closed(sym, bar)
+                        if '@ticker' in stream:
+                            sym = payload.get('s')
+                            if sym:
+                                self.on_ticker_update(sym, payload)
+                        elif '@kline_5m' in stream:
+                            k = payload.get('k', {})
+                            if not k:
+                                continue
+                            sym = k['s']
+                            c = float(k['c'])
+                            h = float(k['h'])
+                            l = float(k['l'])
+                            is_closed = k['x']
+                            
+                            # Process real-time tick
+                            self.on_tick_update(sym, c, h, l)
+                            
+                            # Process closed candle
+                            if is_closed:
+                                vol = float(k['v'])
+                                tb = float(k['V'])
+                                ts = max(vol - tb, 1e-6)
+                                bar = {
+                                    'open_time': pd.to_datetime(k['t'], unit='ms'),
+                                    'open': float(k['o']),
+                                    'high': h,
+                                    'low': l,
+                                    'close': c,
+                                    'volume': vol,
+                                    'taker_buy': tb,
+                                    'taker_sell': ts,
+                                    'tbv_ratio': tb / max(vol, 1e-6)
+                                }
+                                await self.on_candle_closed(sym, bar)
                             
             except Exception as e:
                 self.log_event(f"WebSocket warning: {e}. Reconnecting in 3s...", "WARNING")
@@ -639,11 +939,12 @@ class Mega22PaperBot:
         equity = self.get_total_equity()
         stats = self.get_summary_stats()
         
-        # Build scanner leaderboard
+        # Build scanner leaderboard enriched with sub-second ticker data
         leaderboard = []
         for sym in MEGA_22:
             ind = self.latest_indicators.get(sym, {})
             px = self.latest_prices.get(sym, 0.0)
+            ticker = self.latest_tickers.get(sym, {})
             in_cooldown = self.bar_index <= self.cooldowns.get(sym, -1)
             status = "POSITION_OPEN" if sym in self.active_positions else (
                 "COOLDOWN" if in_cooldown else (
@@ -652,7 +953,16 @@ class Mega22PaperBot:
             )
             leaderboard.append({
                 "sym": sym,
+                "group": "GOLDEN_11" if sym in GOLDEN_11 else "TITAN_11",
                 "price": px,
+                "change_24h": ticker.get('change_24h', 0.0),
+                "high_24h": ticker.get('high_24h', px),
+                "low_24h": ticker.get('low_24h', px),
+                "vol_quote": ticker.get('vol_quote', 0.0),
+                "best_bid": ticker.get('best_bid', px),
+                "best_ask": ticker.get('best_ask', px),
+                "spread_bps": ticker.get('spread_bps', 0.0),
+                "tick_dir": ticker.get('tick_dir', 'flat'),
                 "motif_dist": ind.get('motif_dist', 99.0),
                 "fisher_z": ind.get('fisher_z', 0.0),
                 "ko_z": ind.get('ko_z', 0.0),
@@ -670,7 +980,9 @@ class Mega22PaperBot:
         
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "server_time_ms": int(time.time() * 1000),
             "bar_index": self.bar_index,
+            "is_paused": self.is_paused,
             "equity": round(equity, 2),
             "available_cash": round(self.available_cash, 2),
             "unrealized_pnl": round(unrealized, 2),
@@ -680,24 +992,43 @@ class Mega22PaperBot:
             "roe_pct": stats['roe_pct'],
             "win_rate": stats['win_rate'],
             "profit_factor": stats['profit_factor'],
+            "sharpe_ratio": stats.get('sharpe_ratio', 0.0),
             "total_trades": stats['total_trades'],
             "winning_trades": stats['winning_trades'],
             "losing_trades": stats['losing_trades'],
             "max_drawdown_pct": stats['max_drawdown_pct'],
             "avg_trade_net": stats['avg_trade_net'],
+            "avg_trade_duration_bars": stats.get('avg_trade_duration_bars', 0.0),
+            "avg_trade_duration_min": stats.get('avg_trade_duration_min', 0),
+            "gross_profit": stats.get('gross_profit', 0.0),
+            "gross_loss": stats.get('gross_loss', 0.0),
+            "avg_win": stats.get('avg_win', 0.0),
+            "avg_loss": stats.get('avg_loss', 0.0),
+            "payoff_ratio": stats.get('payoff_ratio', 0.0),
+            "expectancy_usd": stats.get('expectancy_usd', 0.0),
+            "expectancy_pct": stats.get('expectancy_pct', 0.0),
+            "max_consecutive_wins": stats.get('max_consecutive_wins', 0),
+            "max_consecutive_losses": stats.get('max_consecutive_losses', 0),
+            "recovery_factor": stats.get('recovery_factor', 0.0),
             "best_trade_pnl": stats['best_trade_pnl'],
             "worst_trade_pnl": stats['worst_trade_pnl'],
             "last_trade": stats['last_trade'],
             "max_slots": MAX_SLOTS,
             "used_slots": len(self.active_positions),
             "btc_hawkes": round(self.btc_hawkes, 4),
+            "btc_hawkes_history": list(self.btc_hawkes_history),
+            "btc_safe_threshold": BTC_HAWKES_MAX_INTENSITY,
             "btc_24h": round(self.btc_24h, 2),
             "btc_4h": round(self.btc_4h, 2),
             "btc_price": self.latest_prices.get(MACRO_SYMBOL, 0.0),
             "is_btc_safe": self.is_btc_safe,
+            "golden_11": GOLDEN_11,
+            "titan_11": TITAN_11,
             "global_guard_active": self.bar_index <= self.stoploss_guard_until,
             "active_positions": [p.to_dict() for p in self.active_positions.values()],
             "recent_trades": [t.to_dict() for t in self.trade_history[-20:]],
             "leaderboard": leaderboard,
-            "logs": list(self.event_logs)
+            "tickers": self.latest_tickers,
+            "logs": list(self.event_logs),
+            "stats": stats
         }
