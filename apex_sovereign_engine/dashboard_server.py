@@ -139,6 +139,10 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception:
         connected_websockets.discard(websocket)
 
+@app.get("/api/health")
+async def api_health():
+    return {"status": "ok", "bot_running": bot.is_running}
+
 @app.get("/api/state")
 async def get_state():
     """REST API: current state snapshot."""

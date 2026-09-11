@@ -1,8 +1,25 @@
 {
-  "last_update": "2026-09-11T21:22:24.868337+00:00",
-  "capital": 1000.0,
-  "available_cash": 1000.0,
-  "active_positions": {},
+  "last_update": "2026-09-11T22:05:01.000992+00:00",
+  "capital": 999.74,
+  "available_cash": 679.87,
+  "active_positions": {
+    "INJUSDT": {
+      "sym": "INJUSDT",
+      "px": 5.766152999999999,
+      "notional": 320.0,
+      "entry_fee": 0.128,
+      "i": 9,
+      "entry_time": "2026-09-11T22:05:01.000770+00:00",
+      "stop": 0.022,
+      "trailing_active": false,
+      "highest_since_trail": 0.0,
+      "highest_seen": 5.766152999999999,
+      "lowest_seen": 5.766152999999999,
+      "current_px": 5.766152999999999,
+      "unrealized_pnl": 0.0,
+      "unrealized_pnl_pct": 0.0
+    }
+  },
   "history": [],
   "stats": {
     "total_trades": 0,
