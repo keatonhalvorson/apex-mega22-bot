@@ -75,13 +75,31 @@ def main():
         asyncio.run(bot.run())
     else:
         import uvicorn
+        import socket
         from dashboard_server import app, bot
+
         if args.reset:
             bot.reset_portfolio()
-        dashboard_url = f"http://localhost:{args.port}"
+
+        def is_port_in_use(p: int) -> bool:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                return s.connect_ex(("127.0.0.1", p)) == 0
+
+        target_port = args.port
+        if is_port_in_use(target_port):
+            print(f"⚠️ Notice: Port {target_port} is already in use by a running instance!")
+            print(f"   👉 If you already launched the dashboard, you can open it directly: \033[1;36mhttp://localhost:{target_port}\033[0m")
+            # Auto-search next available port
+            for candidate in range(target_port + 1, target_port + 20):
+                if not is_port_in_use(candidate):
+                    print(f"   🔄 Automatically switching to available port: \033[1;32m{candidate}\033[0m")
+                    target_port = candidate
+                    break
+
+        dashboard_url = f"http://localhost:{target_port}"
         print(f"🖥️ High-End Institutional Dashboard Ready:")
         print(f"   👉 Open in your browser: \033[1;36m{dashboard_url}\033[0m\n")
-        uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
+        uvicorn.run(app, host=args.host, port=target_port, log_level="warning")
 
 if __name__ == "__main__":
     main()
