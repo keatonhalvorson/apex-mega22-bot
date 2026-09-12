@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: apex-mega22-bot
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 run_mega22_live.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
