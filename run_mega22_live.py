@@ -58,7 +58,8 @@ def print_summary():
 
 def main():
     parser = argparse.ArgumentParser(description="APEX Sovereign Mega-22 Live Paper Trader")
-    parser.add_argument("--port", type=int, default=8080, help="Web Dashboard Port (default: 8080)")
+    default_port = int(os.environ.get("PORT", 8080))
+    parser.add_argument("--port", type=int, default=default_port, help=f"Web Dashboard Port (default: {default_port})")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Web Dashboard Host (default: 0.0.0.0)")
     parser.add_argument("--reset", action="store_true", help="Reset portfolio balance to initial $1,000.00")
     parser.add_argument("--headless", action="store_true", help="Run in CLI headless mode (no dashboard)")
