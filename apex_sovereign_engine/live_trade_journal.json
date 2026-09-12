@@ -1,8 +1,8 @@
 {
-  "last_update": "2026-09-12T21:25:02.264271+00:00",
-  "capital": 1014.11,
+  "last_update": "2026-09-12T21:30:01.408538+00:00",
+  "capital": 1014.55,
   "available_cash": 679.87,
-  "bar_index": 16,
+  "bar_index": 17,
   "consecutive_stops": 0,
   "stoploss_guard_until": -1,
   "cooldowns": {
@@ -42,9 +42,9 @@
       "highest_since_trail": 5.788,
       "highest_seen": 6.103,
       "lowest_seen": 5.766152999999999,
-      "current_px": 6.025,
-      "unrealized_pnl": 14.365043730195918,
-      "unrealized_pnl_pct": 4.489076165686225
+      "current_px": 6.033,
+      "unrealized_pnl": 14.809013912742238,
+      "unrealized_pnl_pct": 4.627816847731949
     }
   },
   "history": [],

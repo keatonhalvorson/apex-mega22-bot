@@ -38,12 +38,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger("Mega22Bot")
 
-JOURNAL_FILE = Path("/home/atheer/Desktop/ApexPredator/download data/apex_sovereign_engine/live_trade_journal.json")
+JOURNAL_FILE = Path(__file__).resolve().parent / "live_trade_journal.json"
 BINANCE_REST_URLS = [
-    "https://api.binance.com",
-    "https://data-api.binance.vision"
+    "https://data-api.binance.vision",
+    "https://api.binance.com"
 ]
-BINANCE_WS_URL = "wss://stream.binance.com:9443/stream"
+BINANCE_WS_URLS = [
+    "wss://data-stream.binance.vision/stream",
+    "wss://stream.binance.com:9443/stream",
+    "wss://stream.binance.com:443/stream"
+]
 
 class Mega22PaperBot:
     """
@@ -181,6 +185,7 @@ class Mega22PaperBot:
                 "history": [t.to_dict() for t in self.trade_history],
                 "stats": self.get_summary_stats()
             }
+            self.journal_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = self.journal_path.with_suffix(".tmp")
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(state, f, indent=2)
@@ -874,18 +879,21 @@ class Mega22PaperBot:
             sl = s.lower()
             streams.append(f"{sl}@kline_5m")
             streams.append(f"{sl}@ticker")
-        ws_url = f"{BINANCE_WS_URL}?streams={'/'.join(streams)}"
+        ws_idx = 0
+        streams_query = '/'.join(streams)
         
         while self.is_running:
+            active_ws_base = BINANCE_WS_URLS[ws_idx % len(BINANCE_WS_URLS)]
+            ws_url = f"{active_ws_base}?streams={streams_query}"
             try:
                 # Reconnection after gap detection (> 60s since last msg): re-sync klines
                 if time.time() - self.last_ws_message_time > 60:
                     self.log_event("🔄 Re-syncing 300 bars per pair via REST after stream interruption...")
                     await self.bootstrap_historical_klines()
 
-                self.log_event(f"🔌 Connecting to Binance Multi-Stream ({len(streams)} feeds: 5m klines + sub-second L2 tickers)...")
-                async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
-                    self.log_event("🟢 Live Binance Spot WebSocket Connected. Sub-second price streaming active.")
+                self.log_event(f"🔌 Connecting to Binance Multi-Stream on {active_ws_base} ({len(streams)} feeds)...")
+                async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20, open_timeout=15) as ws:
+                    self.log_event(f"🟢 Live Binance Spot WebSocket Connected to {active_ws_base}. Sub-second streaming active.")
                     while self.is_running:
                         msg = await ws.recv()
                         self.last_ws_message_time = time.time()
@@ -931,8 +939,9 @@ class Mega22PaperBot:
                                 await self.on_candle_closed(sym, bar)
                             
             except Exception as e:
-                self.log_event(f"WebSocket warning: {e}. Reconnecting in 3s...", "WARNING")
-                await asyncio.sleep(3)
+                self.log_event(f"WebSocket warning on {active_ws_base}: {e}. Switching endpoint in 2s...", "WARNING")
+                ws_idx += 1
+                await asyncio.sleep(2)
 
     def get_full_state(self) -> Dict[str, Any]:
         """Provides full snapshot of the bot for the dashboard."""
