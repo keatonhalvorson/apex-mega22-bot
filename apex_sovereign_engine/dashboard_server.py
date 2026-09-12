@@ -1065,9 +1065,52 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             max-width: 380px;
             animation: slideIn 0.3s ease-out;
         }
-        @keyframes slideIn {
-            from { transform: translateY(20px); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
+        /* 📱 Mobile Phone & Tablet Optimization (Screens <= 768px) */
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+                padding: 10px 12px;
+            }
+            .header-controls {
+                flex-wrap: wrap;
+                justify-content: space-between;
+            }
+            .kpi-row {
+                grid-template-columns: repeat(2, 1fr) !important;
+                gap: 8px;
+            }
+            .nav-tabs {
+                overflow-x: auto;
+                white-space: nowrap;
+                padding-bottom: 4px;
+                -webkit-overflow-scrolling: touch;
+            }
+            .nav-tab {
+                padding: 7px 12px;
+                font-size: 0.75rem;
+                flex-shrink: 0;
+            }
+            .cockpit-grid {
+                grid-template-columns: 1fr !important;
+            }
+            .table-container {
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+            }
+            .heatmap-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .analytics-grid {
+                grid-template-columns: 1fr !important;
+            }
+            #alert-banner {
+                left: 10px;
+                right: 10px;
+                bottom: 10px;
+                max-width: none;
+            }
         }
     </style>
 </head>
@@ -2703,7 +2746,8 @@ async def get_dashboard():
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Mega-22 Dashboard Server")
-    parser.add_argument("--port", type=int, default=8080, help="Port to bind (default: 8080)")
+    default_port = int(os.environ.get("PORT", 8080))
+    parser.add_argument("--port", type=int, default=default_port, help=f"Port to bind (default: {default_port})")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host interface (default: 0.0.0.0)")
     args = parser.parse_args()
     
