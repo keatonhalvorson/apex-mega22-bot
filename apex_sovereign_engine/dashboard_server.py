@@ -140,6 +140,7 @@ async def websocket_endpoint(websocket: WebSocket):
         connected_websockets.discard(websocket)
 
 @app.get("/api/health")
+@app.head("/api/health")
 async def api_health():
     return {"status": "ok", "bot_running": bot.is_running}
 
@@ -2739,6 +2740,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 """
 
 @app.get("/", response_class=HTMLResponse)
+@app.head("/")
 async def get_dashboard():
     """Serves the ultra-high performance institutional quantitative dashboard."""
     return HTMLResponse(content=DASHBOARD_HTML)
