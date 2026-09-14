@@ -37,8 +37,12 @@ class Position:
     current_px: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
+    held_bars: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, current_bar_index: Optional[int] = None) -> Dict[str, Any]:
+        bars = (current_bar_index - self.i) if current_bar_index is not None else self.held_bars
+        if bars < 0:
+            bars = 0
         return {
             'sym': self.sym,
             'px': self.px,
@@ -53,12 +57,19 @@ class Position:
             'lowest_seen': self.lowest_seen,
             'current_px': self.current_px,
             'unrealized_pnl': self.unrealized_pnl,
-            'unrealized_pnl_pct': self.unrealized_pnl_pct
+            'unrealized_pnl_pct': self.unrealized_pnl_pct,
+            'held_bars': bars,
+            'bars_held': bars,
+            'duration_min': bars * 5
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> 'Position':
-        return cls(**d)
+        valid_fields = {f for f in cls.__dataclass_fields__}
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        if 'held_bars' not in filtered and 'bars_held' in d:
+            filtered['held_bars'] = int(d['bars_held'])
+        return cls(**filtered)
 
 @dataclass
 class TradeRecord:
@@ -78,6 +89,12 @@ class TradeRecord:
     reason: str
     bars_held: int
     cap_after: float
+
+    @classmethod
+    def from_dict(cls, d: Dict[str, Any]) -> 'TradeRecord':
+        valid_fields = {f for f in cls.__dataclass_fields__}
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        return cls(**filtered)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

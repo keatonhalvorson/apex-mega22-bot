@@ -1776,8 +1776,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
 
                 if (tick.equity !== undefined) lastEquity = tick.equity;
-                if (tick.net_profit !== undefined) lastNet = tick.net_profit;
-                if (tick.roe_pct !== undefined) lastRoe = tick.roe_pct;
+                if (tick.total_pnl !== undefined) lastNet = tick.total_pnl;
+                else if (tick.net_profit !== undefined) lastNet = tick.net_profit;
+                if (tick.total_roe_pct !== undefined) lastRoe = tick.total_roe_pct;
+                else if (tick.roe_pct !== undefined) lastRoe = tick.roe_pct;
 
                 delete pendingTicks[sym];
             }
@@ -1817,17 +1819,19 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.getElementById('val-cash').innerText = '$' + s.available_cash.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
             document.getElementById('val-slots').innerText = `${s.used_slots} / ${s.max_slots} خانات`;
             
+            const netVal = s.total_pnl !== undefined ? s.total_pnl : (s.net_profit !== undefined ? s.net_profit : 0.0);
             const netEl = document.getElementById('val-net-profit');
-            netEl.innerText = (s.net_profit >= 0 ? '+$' : '-$') + Math.abs(s.net_profit).toFixed(2);
-            netEl.className = 'kpi-val ' + (s.net_profit >= 0 ? 'text-green' : 'text-red');
+            netEl.innerText = (netVal >= 0 ? '+$' : '-$') + Math.abs(netVal).toFixed(2);
+            netEl.className = 'kpi-val ' + (netVal >= 0 ? 'text-green' : 'text-red');
 
+            const roeVal = s.total_roe_pct !== undefined ? s.total_roe_pct : (s.roe_pct !== undefined ? s.roe_pct : 0.0);
             const roeEl = document.getElementById('val-roe');
-            roeEl.innerText = `العائد الصافي: ${s.roe_pct >= 0 ? '+' : ''}${s.roe_pct.toFixed(2)}% ROE`;
-            roeEl.className = 'kpi-sub ' + (s.roe_pct >= 0 ? 'text-green' : 'text-red');
+            roeEl.innerText = `العائد الصافي: ${roeVal >= 0 ? '+' : ''}${roeVal.toFixed(2)}% ROE`;
+            roeEl.className = 'kpi-sub ' + (roeVal >= 0 ? 'text-green' : 'text-red');
 
             const sharpeVal = s.sharpe_ratio || (s.stats ? s.stats.sharpe_ratio : 0.0) || 0.0;
-            const expVal = s.avg_trade_net || (s.stats ? s.stats.avg_trade_net : 0.0) || 0.0;
-            document.getElementById('val-sharpe').innerText = `معامل شارب: ${sharpeVal.toFixed(2)} | التوقع: ${expVal >= 0 ? '+' : ''}$${expVal.toFixed(2)}`;
+            const realizedVal = s.realized_pnl !== undefined ? s.realized_pnl : ((s.stats && s.stats.net_profit !== undefined) ? s.stats.net_profit : 0.0);
+            document.getElementById('val-sharpe').innerText = `معامل شارب: ${sharpeVal.toFixed(2)} | المحقق: ${realizedVal >= 0 ? '+' : ''}$${realizedVal.toFixed(2)}`;
 
             document.getElementById('val-win-rate').innerText = s.win_rate.toFixed(1) + '%';
             document.getElementById('val-pf').innerText = `معامل الربح: ${s.profit_factor.toFixed(2)} | ${s.winning_trades} رابحة / ${s.losing_trades} خاسرة`;
@@ -2007,6 +2011,24 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 const pnlSign = p.unrealized_pnl >= 0 ? '+' : '';
                 let stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
 
+                // Bars & duration calculation (from bars or elapsed timestamp)
+                let bars = p.held_bars !== undefined ? p.held_bars : (p.bars_held !== undefined ? p.bars_held : 0);
+                let durationMin = bars * 5;
+                if (p.entry_time) {
+                    const entryDate = new Date(p.entry_time);
+                    if (!isNaN(entryDate.getTime())) {
+                        const diffMs = Math.max(0, Date.now() - entryDate.getTime());
+                        const realMins = Math.floor(diffMs / 60000);
+                        if (realMins > durationMin) {
+                            durationMin = realMins;
+                            bars = Math.max(bars, Math.floor(realMins / 5));
+                        }
+                    }
+                }
+                const durH = Math.floor(durationMin / 60);
+                const durM = durationMin % 60;
+                const durText = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
+
                 // Progress -2.2% SL to +6.5% TP
                 const pnlProgress = Math.max(0, Math.min(100, ((p.unrealized_pnl_pct + 2.2) / 8.7) * 100));
                 const fillLeft = p.unrealized_pnl_pct >= 0 ? '25.3%' : `${pnlProgress}%`;
@@ -2033,7 +2055,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                         <div>حجم المركز: <b>$${p.notional.toFixed(2)}</b></div>
                         <div>أعلى سعر وصله: <b>$${formatPx(p.highest_seen)}</b></div>
                         <div>الحماية: <b style="color:${p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${stopText}</b></div>
-                        <div>المدة الحالية: <b>${p.held_bars || 0} شمعة (${(p.held_bars || 0)*5} د)</b></div>
+                        <div>المدة الحالية: <b id="pos-dur-${p.sym}">${bars} شمعة (${durText})</b></div>
                     </div>
 
                     <div class="pos-progress-wrap">
@@ -2061,6 +2083,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             const pnlPct = document.getElementById('pos-pnl-pct-' + p.sym);
             const currPx = document.getElementById('pos-curr-px-' + p.sym);
             const fill = document.getElementById('pos-prog-fill-' + p.sym);
+            const durEl = document.getElementById('pos-dur-' + p.sym);
 
             if (pnlVal && pnlPct && currPx) {
                 const isPos = p.unrealized_pnl >= 0;
@@ -2074,6 +2097,24 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 pnlPct.className = 'pos-pnl-pct ' + col;
 
                 currPx.innerText = '$' + formatPx(p.current_px);
+
+                if (durEl && p.entry_time) {
+                    let bars = p.held_bars !== undefined ? p.held_bars : (p.bars_held !== undefined ? p.bars_held : 0);
+                    let durationMin = bars * 5;
+                    const entryDate = new Date(p.entry_time);
+                    if (!isNaN(entryDate.getTime())) {
+                        const diffMs = Math.max(0, Date.now() - entryDate.getTime());
+                        const realMins = Math.floor(diffMs / 60000);
+                        if (realMins > durationMin) {
+                            durationMin = realMins;
+                            bars = Math.max(bars, Math.floor(realMins / 5));
+                        }
+                    }
+                    const durH = Math.floor(durationMin / 60);
+                    const durM = durationMin % 60;
+                    const durFormatted = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
+                    durEl.innerText = `${bars} شمعة (${durFormatted})`;
+                }
 
                 if (fill) {
                     const pnlProgress = Math.max(0, Math.min(100, ((p.unrealized_pnl_pct + 2.2) / 8.7) * 100));

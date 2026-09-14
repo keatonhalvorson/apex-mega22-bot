@@ -243,5 +243,134 @@ def test_websocket_live_streaming():
         assert alert_msg["type"] == "alert"
         assert alert_msg["data"]["title"] == "QUANT TERMINAL TEST"
 
+def test_position_bars_held_and_duration_calculation(tmp_path):
+    """Test that active positions calculate and report held_bars, bars_held, and duration_min accurately."""
+    journal = tmp_path / "test_bars.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    bot.bar_index = 50
+    
+    pos = Position(
+        sym="TIAUSDT", px=0.35, notional=320.0, entry_fee=0.128,
+        i=20, entry_time="2026-09-13T22:10:00Z"
+    )
+    bot.active_positions["TIAUSDT"] = pos
+    
+    # 1. to_dict with current_bar_index
+    pos_d = pos.to_dict(current_bar_index=bot.bar_index)
+    assert pos_d["held_bars"] == 30  # 50 - 20
+    assert pos_d["bars_held"] == 30
+    assert pos_d["duration_min"] == 150  # 30 * 5 min
+    
+    # 2. In get_full_state
+    state = bot.get_full_state()
+    assert len(state["active_positions"]) == 1
+    pos_state = state["active_positions"][0]
+    assert pos_state["held_bars"] == 30
+    assert pos_state["bars_held"] == 30
+    assert pos_state["duration_min"] == 150
+
+def test_state_and_tick_consistency(tmp_path):
+    """Test that state snapshot and subsecond tick broadcasts have identical, consistent Net PnL and ROE values."""
+    journal = tmp_path / "test_consistency.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    
+    # Add a closed trade: +$20 profit
+    t1 = TradeRecord(
+        sym="INJUSDT", entry_time="t1", exit_time="t2", entry_i=5, exit_i=20,
+        entry_px=5.0, exit_px=5.325, pnl_pct=6.5, notional=320.0, gross=20.8, net=20.54,
+        entry_fee=0.13, exit_fee=0.13, reason="TAKE_PROFIT", bars_held=15, cap_after=1020.54
+    )
+    bot.trade_history.append(t1)
+    bot.available_cash = 1020.54
+    
+    # Add open position with +$10 floating profit
+    pos = Position(
+        sym="TIAUSDT", px=0.35, notional=320.0, entry_fee=0.13,
+        i=25, entry_time="2026-09-13T22:10:00Z", current_px=0.3609375, unrealized_pnl=10.0
+    )
+    bot.active_positions["TIAUSDT"] = pos
+    
+    # Capture broadcasts
+    events = []
+    bot.add_listener(lambda ev, data: events.append((ev, data)))
+    
+    # Trigger tick update
+    bot.on_ticker_update("TIAUSDT", {
+        "c": "0.3609375", "p": "0.01", "P": "3.12", "h": "0.37", "l": "0.34",
+        "v": "1000", "q": "360", "b": "0.36", "a": "0.361"
+    })
+    
+    tick_data = [d for ev, d in events if ev == "tick"][-1]
+    state_data = bot.get_full_state()
+    
+    # Critical parity check: tick and snapshot MUST report identical total_pnl and net_profit
+    assert pytest.approx(tick_data["total_pnl"], rel=1e-2) == state_data["total_pnl"]
+    assert pytest.approx(tick_data["net_profit"], rel=1e-2) == state_data["net_profit"]
+    assert pytest.approx(tick_data["total_roe_pct"], rel=1e-2) == state_data["total_roe_pct"]
+    assert pytest.approx(tick_data["roe_pct"], rel=1e-2) == state_data["roe_pct"]
+    assert state_data["capital"] == state_data["equity"]
+    assert tick_data["capital"] == tick_data["equity"]
+    # Total PnL should be ~$30.41 (realized $20.54 + unrealized gross $10.0 - est exit fee $0.13)
+    assert tick_data["total_pnl"] > 30.0
+    assert state_data["total_pnl"] > 30.0
+
+def test_capital_accumulation_and_compounding(tmp_path):
+    """Test that multiple trade closes correctly compound and preserve cumulative capital."""
+    journal = tmp_path / "test_compound.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    
+    # Initial state
+    assert bot.capital == 1000.0
+    assert bot.available_cash == 1000.0
+    
+    # 1. Trade 1: +$20 profit
+    pos1 = Position(sym="INJUSDT", px=5.0, notional=320.0, entry_fee=0.128, i=5, entry_time="t1")
+    bot.available_cash -= (320.0 + 0.128)
+    bot.active_positions["INJUSDT"] = pos1
+    bot._execute_position_close("INJUSDT", exit_px=5.325, reason="TAKE_PROFIT")
+    
+    assert pytest.approx(bot.available_cash, rel=1e-2) == 1020.54
+    assert pytest.approx(bot.capital, rel=1e-2) == 1020.54
+    assert bot.trade_history[0].cap_after == 1020.54
+    
+    # 2. Trade 2: -$7 loss
+    pos2 = Position(sym="FILUSDT", px=1.0, notional=326.57, entry_fee=0.13, i=10, entry_time="t2")
+    bot.available_cash -= (326.57 + 0.13)
+    bot.active_positions["FILUSDT"] = pos2
+    bot._execute_position_close("FILUSDT", exit_px=0.978, reason="STOP_LOSS")
+    
+    assert pytest.approx(bot.available_cash, rel=1e-2) == 1013.10
+    assert pytest.approx(bot.capital, rel=1e-2) == 1013.10
+    assert bot.trade_history[1].cap_after == 1013.10
+    
+    # 3. Reload from saved journal and verify persistence
+    bot2 = Mega22PaperBot(journal_path=journal)
+    assert pytest.approx(bot2.available_cash, rel=1e-2) == 1013.10
+    assert pytest.approx(bot2.capital, rel=1e-2) == 1013.10
+    assert len(bot2.trade_history) == 2
+    assert bot2.trade_history[1].cap_after == 1013.10
+
+def test_journal_resilience_to_unknown_fields(tmp_path):
+    """Test that Position and TradeRecord ignore unknown fields when deserialized from JSON."""
+    d_pos = {
+        "sym": "TIAUSDT", "px": 0.35, "notional": 320.0, "entry_fee": 0.128,
+        "i": 10, "entry_time": "t1", "unknown_extra_metric": 999.9, "legacy_field": "test"
+    }
+    p = Position.from_dict(d_pos)
+    assert p.sym == "TIAUSDT"
+    assert p.px == 0.35
+    assert not hasattr(p, "unknown_extra_metric")
+    
+    d_trade = {
+        "sym": "INJUSDT", "entry_time": "t1", "exit_time": "t2", "entry_i": 5, "exit_i": 20,
+        "entry_px": 5.0, "exit_px": 5.325, "pnl_pct": 6.5, "notional": 320.0, "gross": 20.8,
+        "net": 20.54, "entry_fee": 0.13, "exit_fee": 0.13, "reason": "TAKE_PROFIT",
+        "bars_held": 15, "cap_after": 1020.54, "extra_experimental_flag": True
+    }
+    t = TradeRecord.from_dict(d_trade)
+    assert t.sym == "INJUSDT"
+    assert t.net == 20.54
+    assert not hasattr(t, "extra_experimental_flag")
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
