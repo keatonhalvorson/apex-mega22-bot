@@ -1194,7 +1194,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 <span>Sharpe</span>
             </div>
             <div class="kpi-val" id="val-net-profit">+$0.00</div>
-            <div class="kpi-sub" id="val-sharpe">معامل شارب: 0.00 | التوقع: +$0.00</div>
+            <div class="kpi-sub" id="val-sharpe">معامل شارب: 0.00 | المحقق: +$0.00</div>
         </div>
 
         <div class="kpi-card amber">
@@ -1729,6 +1729,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             let lastEquity = null;
             let lastNet = null;
             let lastRoe = null;
+            let lastSharpe = null;
+            let lastRealized = null;
 
             for (const sym in pendingTicks) {
                 const tick = pendingTicks[sym];
@@ -1739,8 +1741,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 if (hmPrice) {
                     hmPrice.innerText = '$' + formatPx(tick.price);
                     hmPrice.classList.remove('tick-up', 'tick-down');
-                    if (tick.tick_dir === 'up') hmPrice.classList.add('tick-up');
-                    else if (tick.tick_dir === 'down') hmPrice.classList.add('tick-down');
+                    if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');
+                    else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');
                 }
                 const hmChg = document.getElementById('hm-chg-' + sym);
                 if (hmChg) {
@@ -1780,6 +1782,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 else if (tick.net_profit !== undefined) lastNet = tick.net_profit;
                 if (tick.total_roe_pct !== undefined) lastRoe = tick.total_roe_pct;
                 else if (tick.roe_pct !== undefined) lastRoe = tick.roe_pct;
+                if (tick.sharpe_ratio !== undefined) lastSharpe = tick.sharpe_ratio;
+                if (tick.realized_pnl !== undefined) lastRealized = tick.realized_pnl;
 
                 delete pendingTicks[sym];
             }
@@ -1798,6 +1802,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 roeEl.innerText = `العائد الصافي: ${lastRoe >= 0 ? '+' : ''}${lastRoe.toFixed(2)}% ROE`;
                 roeEl.className = 'kpi-sub ' + (lastRoe >= 0 ? 'text-green' : 'text-red');
             }
+            if ((lastSharpe !== null || lastRealized !== null) && document.getElementById('val-sharpe')) {
+                const sVal = lastSharpe !== null ? lastSharpe : 0.0;
+                const rVal = lastRealized !== null ? lastRealized : 0.0;
+                document.getElementById('val-sharpe').innerText = `معامل شارب: ${sVal.toFixed(2)} | المحقق: ${rVal >= 0 ? '+' : ''}$${rVal.toFixed(2)}`;
+            }
         }
 
         function formatPx(px) {
@@ -1815,9 +1824,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             updatePauseButtonUI();
 
             // 1. KPI Cards
-            document.getElementById('val-equity').innerText = '$' + s.equity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            document.getElementById('val-cash').innerText = '$' + s.available_cash.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            document.getElementById('val-slots').innerText = `${s.used_slots} / ${s.max_slots} خانات`;
+            const eqVal = (s.equity !== undefined && s.equity !== null) ? s.equity : (s.capital || 1000.0);
+            document.getElementById('val-equity').innerText = '$' + eqVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            const cashVal = (s.available_cash !== undefined && s.available_cash !== null) ? s.available_cash : 1000.0;
+            document.getElementById('val-cash').innerText = '$' + cashVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('val-slots').innerText = `${s.used_slots || 0} / ${s.max_slots || 3} خانات`;
             
             const netVal = s.total_pnl !== undefined ? s.total_pnl : (s.net_profit !== undefined ? s.net_profit : 0.0);
             const netEl = document.getElementById('val-net-profit');
@@ -1829,7 +1840,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             roeEl.innerText = `العائد الصافي: ${roeVal >= 0 ? '+' : ''}${roeVal.toFixed(2)}% ROE`;
             roeEl.className = 'kpi-sub ' + (roeVal >= 0 ? 'text-green' : 'text-red');
 
-            const sharpeVal = s.sharpe_ratio || (s.stats ? s.stats.sharpe_ratio : 0.0) || 0.0;
+            const sharpeVal = s.sharpe_ratio !== undefined ? s.sharpe_ratio : ((s.stats && s.stats.sharpe_ratio !== undefined) ? s.stats.sharpe_ratio : 0.0);
             const realizedVal = s.realized_pnl !== undefined ? s.realized_pnl : ((s.stats && s.stats.net_profit !== undefined) ? s.stats.net_profit : 0.0);
             document.getElementById('val-sharpe').innerText = `معامل شارب: ${sharpeVal.toFixed(2)} | المحقق: ${realizedVal >= 0 ? '+' : ''}$${realizedVal.toFixed(2)}`;
 
@@ -2013,7 +2024,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 // Bars & duration calculation (from bars or elapsed timestamp)
                 let bars = p.held_bars !== undefined ? p.held_bars : (p.bars_held !== undefined ? p.bars_held : 0);
-                let durationMin = bars * 5;
+                let durationMin = p.duration_min !== undefined ? p.duration_min : (bars * 5);
                 if (p.entry_time) {
                     const entryDate = new Date(p.entry_time);
                     if (!isNaN(entryDate.getTime())) {
@@ -2098,16 +2109,18 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
                 currPx.innerText = '$' + formatPx(p.current_px);
 
-                if (durEl && p.entry_time) {
+                if (durEl) {
                     let bars = p.held_bars !== undefined ? p.held_bars : (p.bars_held !== undefined ? p.bars_held : 0);
-                    let durationMin = bars * 5;
-                    const entryDate = new Date(p.entry_time);
-                    if (!isNaN(entryDate.getTime())) {
-                        const diffMs = Math.max(0, Date.now() - entryDate.getTime());
-                        const realMins = Math.floor(diffMs / 60000);
-                        if (realMins > durationMin) {
-                            durationMin = realMins;
-                            bars = Math.max(bars, Math.floor(realMins / 5));
+                    let durationMin = p.duration_min !== undefined ? p.duration_min : (bars * 5);
+                    if (p.entry_time) {
+                        const entryDate = new Date(p.entry_time);
+                        if (!isNaN(entryDate.getTime())) {
+                            const diffMs = Math.max(0, Date.now() - entryDate.getTime());
+                            const realMins = Math.floor(diffMs / 60000);
+                            if (realMins > durationMin) {
+                                durationMin = realMins;
+                                bars = Math.max(bars, Math.floor(realMins / 5));
+                            }
                         }
                     }
                     const durH = Math.floor(durationMin / 60);
@@ -2252,8 +2265,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.getElementById('m-rec').innerText = (stats.recovery_factor || 0.0).toFixed(2);
             document.getElementById('m-gross-win').innerText = '+$' + (stats.gross_profit || 0.0).toFixed(2);
             document.getElementById('m-gross-loss').innerText = '-$' + Math.abs(stats.gross_loss || 0.0).toFixed(2);
-            document.getElementById('m-payoff').innerText = (stats.payoff_ratio || 0.0).toFixed(2);
-            document.getElementById('m-exp').innerText = `+$${(stats.expectancy_usd || 0.0).toFixed(2)} (${(stats.expectancy_pct || 0.0).toFixed(2)}%)`;
+            const expUsd = stats.expectancy_usd || 0.0;
+            const expPct = stats.expectancy_pct || 0.0;
+            document.getElementById('m-exp').innerText = `${expUsd >= 0 ? '+' : '-'}$${Math.abs(expUsd).toFixed(2)} (${expPct >= 0 ? '+' : ''}${expPct.toFixed(2)}%)`;
             document.getElementById('m-dd').innerText = (stats.max_drawdown_pct || 0.0).toFixed(2) + '%';
             document.getElementById('m-duration').innerText = `${stats.avg_trade_duration_bars || 0} شمعة (${stats.avg_trade_duration_min || 0} دقيقة)`;
             document.getElementById('m-streaks').innerText = `${stats.max_consecutive_wins || 0}W متتالية / ${stats.max_consecutive_losses || 0}L متتالية`;
@@ -2631,7 +2645,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     <td class="${col}" style="font-weight:800;">${sign}$${t.net.toFixed(2)}</td>
                     <td>${reasonAr}</td>
                     <td>${t.bars_held} (${t.bars_held * 5} د)</td>
-                    <td>$${(t.cap_after || 1000).toFixed(2)}</td>
+                    <td>$${(t.cap_after !== undefined && t.cap_after !== null ? t.cap_after : 1000).toFixed(2)}</td>
                 </tr>`;
             }).join('');
         }

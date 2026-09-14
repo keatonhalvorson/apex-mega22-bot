@@ -372,5 +372,36 @@ def test_journal_resilience_to_unknown_fields(tmp_path):
     assert t.net == 20.54
     assert not hasattr(t, "extra_experimental_flag")
 
+def test_trade_record_missing_fields_defaults():
+    """Test that TradeRecord gracefully defaults bars_held and cap_after when omitted."""
+    d = {
+        "sym": "BONKUSDT", "entry_time": "t1", "exit_time": "t2", "entry_i": 1, "exit_i": 2,
+        "entry_px": 0.00001, "exit_px": 0.000012, "pnl_pct": 20.0, "notional": 300.0,
+        "gross": 60.0, "net": 59.5, "entry_fee": 0.25, "exit_fee": 0.25, "reason": "TAKE_PROFIT"
+    }
+    t = TradeRecord.from_dict(d)
+    assert t.bars_held == 0
+    assert t.cap_after == 1000.0
+
+def test_tick_payload_includes_sharpe():
+    """Test that tick broadcast includes sharpe_ratio matching state snapshot."""
+    bot = Mega22PaperBot()
+    t1 = TradeRecord(
+        sym="INJUSDT", entry_time="t1", exit_time="t2", entry_i=5, exit_i=20,
+        entry_px=5.0, exit_px=5.325, pnl_pct=6.5, notional=320.0, gross=20.8, net=20.54,
+        entry_fee=0.13, exit_fee=0.13, reason="TAKE_PROFIT", bars_held=15, cap_after=1020.54
+    )
+    bot.trade_history.append(t1)
+    events = []
+    bot.add_listener(lambda ev, data: events.append((ev, data)))
+    bot.on_ticker_update("TIAUSDT", {
+        "c": "0.35", "p": "0.0", "P": "0.0", "h": "0.36", "l": "0.34",
+        "v": "100", "q": "35", "b": "0.35", "a": "0.351"
+    })
+    tick = [d for ev, d in events if ev == "tick"][-1]
+    state = bot.get_full_state()
+    assert "sharpe_ratio" in tick
+    assert tick["sharpe_ratio"] == state["sharpe_ratio"]
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

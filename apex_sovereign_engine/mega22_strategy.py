@@ -5,6 +5,7 @@ Implements exact 1:1 mathematical parity with the 32-Month $11,727.69 backtest e
 """
 
 import math
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import numpy as np
@@ -43,6 +44,7 @@ class Position:
         bars = (current_bar_index - self.i) if current_bar_index is not None else self.held_bars
         if bars < 0:
             bars = 0
+        self.held_bars = bars
         return {
             'sym': self.sym,
             'px': self.px,
@@ -87,13 +89,17 @@ class TradeRecord:
     entry_fee: float
     exit_fee: float
     reason: str
-    bars_held: int
-    cap_after: float
+    bars_held: int = 0
+    cap_after: float = 1000.0
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> 'TradeRecord':
         valid_fields = {f for f in cls.__dataclass_fields__}
         filtered = {k: v for k, v in d.items() if k in valid_fields}
+        if 'bars_held' not in filtered:
+            filtered['bars_held'] = int(d.get('held_bars', 0))
+        if 'cap_after' not in filtered:
+            filtered['cap_after'] = float(d.get('capital_after', d.get('cap_after', 1000.0)))
         return cls(**filtered)
 
     def to_dict(self) -> Dict[str, Any]:

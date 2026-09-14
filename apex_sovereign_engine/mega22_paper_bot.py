@@ -162,8 +162,8 @@ class Mega22PaperBot:
             self.active_positions = {}
             for sym, pos_d in raw_pos.items():
                 pos = Position.from_dict(pos_d)
-                if pos.held_bars == 0 and self.bar_index > pos.i:
-                    pos.held_bars = self.bar_index - pos.i
+                if self.bar_index >= pos.i:
+                    pos.held_bars = max(pos.held_bars, self.bar_index - pos.i)
                 self.active_positions[sym] = pos
                 
             raw_hist = data.get("history", [])
@@ -612,6 +612,7 @@ class Mega22PaperBot:
             "roe_pct": round(roe_pct, 2),
             "total_roe_pct": round(roe_pct, 2),
             "realized_pnl": stats['net_profit'],
+            "sharpe_ratio": stats.get('sharpe_ratio', 0.0),
             "unrealized_pnl": round(sum(p.unrealized_pnl for p in self.active_positions.values()), 2)
         }
         self._broadcast("tick", tick_payload)
