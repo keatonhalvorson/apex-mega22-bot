@@ -403,5 +403,28 @@ def test_tick_payload_includes_sharpe():
     assert "sharpe_ratio" in tick
     assert tick["sharpe_ratio"] == state["sharpe_ratio"]
 
+def test_position_to_dict_entry_time_fallback():
+    """Test that Position.to_dict computes elapsed bars and duration_min from entry_time when held_bars is 0."""
+    from datetime import datetime, timezone, timedelta
+    past_time = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+    pos = Position(
+        sym="TIAUSDT", px=0.35, notional=320.0, entry_fee=0.13,
+        i=0, entry_time=past_time
+    )
+    # When called without current_bar_index and held_bars=0, should calculate from timestamp
+    d = pos.to_dict()
+    assert d["held_bars"] >= 8
+    assert d["bars_held"] >= 8
+    assert d["duration_min"] >= 40
+
+def test_dashboard_html_contains_safe_duration_and_no_matprice_bug():
+    """Verify that dashboard_server HTML includes calcPositionDuration and fixed tick-dir classList."""
+    from dashboard_server import DASHBOARD_HTML
+    assert "calcPositionDuration" in DASHBOARD_HTML
+    assert "renderPositionCardHtml" in DASHBOARD_HTML
+    assert "pos-empty-placeholder" in DASHBOARD_HTML
+    # Ensure matPrice is not accidentally called in the hmPrice block
+    assert "if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');\n                    else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');\n                }\n                const hmChg" not in DASHBOARD_HTML
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

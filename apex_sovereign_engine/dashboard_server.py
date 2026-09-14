@@ -1716,6 +1716,59 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         }
 
         // Sub-second Live Tick Batching via requestAnimationFrame
+        function setElText(id, text) {
+            const el = document.getElementById(id);
+            if (el && el.innerText !== text) el.innerText = text;
+            return el;
+        }
+
+        function setElClass(el, cls) {
+            if (el && el.className !== cls) el.className = cls;
+        }
+
+        let lastServerTimeMs = 0;
+        let lastServerTimeReceivedAt = 0;
+
+        function parseEntryTimeMs(timeStr) {
+            if (!timeStr) return null;
+            const cleanStr = String(timeStr).replace(/(\.\d{3})\d+/, '$1');
+            const d = new Date(cleanStr);
+            const t = d.getTime();
+            if (!isNaN(t)) return t;
+            const d2 = new Date(timeStr);
+            const t2 = d2.getTime();
+            return !isNaN(t2) ? t2 : null;
+        }
+
+        function calcPositionDuration(p) {
+            let bars = (p.held_bars !== undefined && p.held_bars !== null) ? Number(p.held_bars) : (
+                (p.bars_held !== undefined && p.bars_held !== null) ? Number(p.bars_held) : 0
+            );
+            let durationMin = (p.duration_min !== undefined && p.duration_min !== null && Number(p.duration_min) > 0) ? Number(p.duration_min) : (bars * 5);
+
+            if (p.entry_time) {
+                const entryMs = parseEntryTimeMs(p.entry_time);
+                if (entryMs !== null) {
+                    const nowMs = lastServerTimeMs ? (lastServerTimeMs + (Date.now() - lastServerTimeReceivedAt)) : Date.now();
+                    const diffMs = Math.max(0, nowMs - entryMs);
+                    const elapsedMins = Math.floor(diffMs / 60000);
+                    if (elapsedMins > durationMin) {
+                        durationMin = elapsedMins;
+                    }
+                    if (elapsedMins > 0) {
+                        bars = Math.max(bars, Math.floor(elapsedMins / 5));
+                    }
+                }
+            }
+            if (bars === 0 && durationMin > 0) {
+                bars = Math.floor(durationMin / 5);
+            }
+            const durH = Math.floor(durationMin / 60);
+            const durM = durationMin % 60;
+            const durText = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
+            return { bars, durationMin, durText, displayStr: `${bars} شمعة (${durText})` };
+        }
+
         function queueSubsecondTick(tick) {
             pendingTicks[tick.sym] = tick;
             if (!isRafScheduled) {
@@ -1739,37 +1792,45 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 // 1. Update Heatmap Card (DOM batch)
                 const hmPrice = document.getElementById('hm-px-' + sym);
                 if (hmPrice) {
-                    hmPrice.innerText = '$' + formatPx(tick.price);
+                    const pxStr = '$' + formatPx(tick.price);
+                    if (hmPrice.innerText !== pxStr) hmPrice.innerText = pxStr;
                     hmPrice.classList.remove('tick-up', 'tick-down');
-                    if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');
-                    else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');
+                    if (tick.tick_dir === 'up') hmPrice.classList.add('tick-up');
+                    else if (tick.tick_dir === 'down') hmPrice.classList.add('tick-down');
                 }
                 const hmChg = document.getElementById('hm-chg-' + sym);
                 if (hmChg) {
-                    hmChg.innerText = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
-                    hmChg.className = 'hm-chg-pill ' + (tick.change_24h >= 0 ? 'pos' : 'neg');
+                    const chgStr = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
+                    const chgCls = 'hm-chg-pill ' + (tick.change_24h >= 0 ? 'pos' : 'neg');
+                    if (hmChg.innerText !== chgStr) hmChg.innerText = chgStr;
+                    setElClass(hmChg, chgCls);
                 }
                 const hmSpread = document.getElementById('hm-spread-' + sym);
                 if (hmSpread && tick.spread_bps !== undefined) {
-                    hmSpread.innerText = tick.spread_bps.toFixed(1) + ' bps';
+                    const spStr = tick.spread_bps.toFixed(1) + ' bps';
+                    if (hmSpread.innerText !== spStr) hmSpread.innerText = spStr;
                 }
 
                 // 2. Update Alpha Matrix Row Price & Spread
                 const matPrice = document.getElementById('mat-px-' + sym);
                 if (matPrice) {
-                    matPrice.innerText = '$' + formatPx(tick.price);
+                    const pxStr = '$' + formatPx(tick.price);
+                    if (matPrice.innerText !== pxStr) matPrice.innerText = pxStr;
                     matPrice.classList.remove('tick-up', 'tick-down');
                     if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');
                     else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');
                 }
                 const matChg = document.getElementById('mat-chg-' + sym);
                 if (matChg) {
-                    matChg.innerText = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
-                    matChg.className = tick.change_24h >= 0 ? 'text-green' : 'text-red';
+                    const chgStr = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
+                    const chgCls = tick.change_24h >= 0 ? 'text-green' : 'text-red';
+                    if (matChg.innerText !== chgStr) matChg.innerText = chgStr;
+                    setElClass(matChg, chgCls);
                 }
                 const matSpread = document.getElementById('mat-spread-' + sym);
                 if (matSpread && tick.spread_bps !== undefined) {
-                    matSpread.innerText = tick.spread_bps.toFixed(1) + ' bps';
+                    const spStr = tick.spread_bps.toFixed(1) + ' bps';
+                    if (matSpread.innerText !== spStr) matSpread.innerText = spStr;
                 }
 
                 // 3. Update Active Position Card if open
@@ -1782,30 +1843,36 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 else if (tick.net_profit !== undefined) lastNet = tick.net_profit;
                 if (tick.total_roe_pct !== undefined) lastRoe = tick.total_roe_pct;
                 else if (tick.roe_pct !== undefined) lastRoe = tick.roe_pct;
-                if (tick.sharpe_ratio !== undefined) lastSharpe = tick.sharpe_ratio;
-                if (tick.realized_pnl !== undefined) lastRealized = tick.realized_pnl;
+                if (tick.sharpe_ratio !== undefined && tick.sharpe_ratio !== null) lastSharpe = tick.sharpe_ratio;
+                if (tick.realized_pnl !== undefined && tick.realized_pnl !== null) lastRealized = tick.realized_pnl;
 
                 delete pendingTicks[sym];
             }
 
             // Update top KPI cards if changed
-            if (lastEquity !== null && document.getElementById('val-equity')) {
-                document.getElementById('val-equity').innerText = '$' + lastEquity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            if (lastEquity !== null) {
+                setElText('val-equity', '$' + lastEquity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
             }
-            if (lastNet !== null && document.getElementById('val-net-profit')) {
+            if (lastNet !== null) {
                 const netEl = document.getElementById('val-net-profit');
-                netEl.innerText = (lastNet >= 0 ? '+$' : '-$') + Math.abs(lastNet).toFixed(2);
-                netEl.className = 'kpi-val ' + (lastNet >= 0 ? 'text-green' : 'text-red');
+                if (netEl) {
+                    const netStr = (lastNet >= 0 ? '+$' : '-$') + Math.abs(lastNet).toFixed(2);
+                    const netCls = 'kpi-val ' + (lastNet >= 0 ? 'text-green' : 'text-red');
+                    if (netEl.innerText !== netStr) netEl.innerText = netStr;
+                    setElClass(netEl, netCls);
+                }
             }
-            if (lastRoe !== null && document.getElementById('val-roe')) {
+            if (lastRoe !== null) {
                 const roeEl = document.getElementById('val-roe');
-                roeEl.innerText = `العائد الصافي: ${lastRoe >= 0 ? '+' : ''}${lastRoe.toFixed(2)}% ROE`;
-                roeEl.className = 'kpi-sub ' + (lastRoe >= 0 ? 'text-green' : 'text-red');
+                if (roeEl) {
+                    const roeStr = `العائد الصافي: ${lastRoe >= 0 ? '+' : ''}${lastRoe.toFixed(2)}% ROE`;
+                    const roeCls = 'kpi-sub ' + (lastRoe >= 0 ? 'text-green' : 'text-red');
+                    if (roeEl.innerText !== roeStr) roeEl.innerText = roeStr;
+                    setElClass(roeEl, roeCls);
+                }
             }
-            if ((lastSharpe !== null || lastRealized !== null) && document.getElementById('val-sharpe')) {
-                const sVal = lastSharpe !== null ? lastSharpe : 0.0;
-                const rVal = lastRealized !== null ? lastRealized : 0.0;
-                document.getElementById('val-sharpe').innerText = `معامل شارب: ${sVal.toFixed(2)} | المحقق: ${rVal >= 0 ? '+' : ''}$${rVal.toFixed(2)}`;
+            if (lastSharpe !== null && lastRealized !== null) {
+                setElText('val-sharpe', `معامل شارب: ${lastSharpe.toFixed(2)} | المحقق: ${lastRealized >= 0 ? '+' : ''}$${lastRealized.toFixed(2)}`);
             }
         }
 
@@ -1823,78 +1890,107 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             isPausedState = s.is_paused || false;
             updatePauseButtonUI();
 
+            if (s.server_time_ms) {
+                lastServerTimeMs = s.server_time_ms;
+                lastServerTimeReceivedAt = Date.now();
+            }
+
             // 1. KPI Cards
             const eqVal = (s.equity !== undefined && s.equity !== null) ? s.equity : (s.capital || 1000.0);
-            document.getElementById('val-equity').innerText = '$' + eqVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            setElText('val-equity', '$' + eqVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
             const cashVal = (s.available_cash !== undefined && s.available_cash !== null) ? s.available_cash : 1000.0;
-            document.getElementById('val-cash').innerText = '$' + cashVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            document.getElementById('val-slots').innerText = `${s.used_slots || 0} / ${s.max_slots || 3} خانات`;
+            setElText('val-cash', '$' + cashVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+            setElText('val-slots', `${s.used_slots || 0} / ${s.max_slots || 3} خانات`);
             
             const netVal = s.total_pnl !== undefined ? s.total_pnl : (s.net_profit !== undefined ? s.net_profit : 0.0);
             const netEl = document.getElementById('val-net-profit');
-            netEl.innerText = (netVal >= 0 ? '+$' : '-$') + Math.abs(netVal).toFixed(2);
-            netEl.className = 'kpi-val ' + (netVal >= 0 ? 'text-green' : 'text-red');
+            if (netEl) {
+                const netStr = (netVal >= 0 ? '+$' : '-$') + Math.abs(netVal).toFixed(2);
+                const netCls = 'kpi-val ' + (netVal >= 0 ? 'text-green' : 'text-red');
+                if (netEl.innerText !== netStr) netEl.innerText = netStr;
+                setElClass(netEl, netCls);
+            }
 
             const roeVal = s.total_roe_pct !== undefined ? s.total_roe_pct : (s.roe_pct !== undefined ? s.roe_pct : 0.0);
             const roeEl = document.getElementById('val-roe');
-            roeEl.innerText = `العائد الصافي: ${roeVal >= 0 ? '+' : ''}${roeVal.toFixed(2)}% ROE`;
-            roeEl.className = 'kpi-sub ' + (roeVal >= 0 ? 'text-green' : 'text-red');
+            if (roeEl) {
+                const roeStr = `العائد الصافي: ${roeVal >= 0 ? '+' : ''}${roeVal.toFixed(2)}% ROE`;
+                const roeCls = 'kpi-sub ' + (roeVal >= 0 ? 'text-green' : 'text-red');
+                if (roeEl.innerText !== roeStr) roeEl.innerText = roeStr;
+                setElClass(roeEl, roeCls);
+            }
 
-            const sharpeVal = s.sharpe_ratio !== undefined ? s.sharpe_ratio : ((s.stats && s.stats.sharpe_ratio !== undefined) ? s.stats.sharpe_ratio : 0.0);
-            const realizedVal = s.realized_pnl !== undefined ? s.realized_pnl : ((s.stats && s.stats.net_profit !== undefined) ? s.stats.net_profit : 0.0);
-            document.getElementById('val-sharpe').innerText = `معامل شارب: ${sharpeVal.toFixed(2)} | المحقق: ${realizedVal >= 0 ? '+' : ''}$${realizedVal.toFixed(2)}`;
+            const sharpeVal = (s.sharpe_ratio !== undefined && s.sharpe_ratio !== null) ? s.sharpe_ratio : ((s.stats && s.stats.sharpe_ratio !== undefined) ? s.stats.sharpe_ratio : 0.0);
+            const realizedVal = (s.realized_pnl !== undefined && s.realized_pnl !== null) ? s.realized_pnl : ((s.stats && s.stats.net_profit !== undefined) ? s.stats.net_profit : 0.0);
+            setElText('val-sharpe', `معامل شارب: ${sharpeVal.toFixed(2)} | المحقق: ${realizedVal >= 0 ? '+' : ''}$${realizedVal.toFixed(2)}`);
 
-            document.getElementById('val-win-rate').innerText = s.win_rate.toFixed(1) + '%';
-            document.getElementById('val-pf').innerText = `معامل الربح: ${s.profit_factor.toFixed(2)} | ${s.winning_trades} رابحة / ${s.losing_trades} خاسرة`;
+            setElText('val-win-rate', (s.win_rate !== undefined ? s.win_rate.toFixed(1) : '0.0') + '%');
+            setElText('val-pf', `معامل الربح: ${(s.profit_factor !== undefined ? s.profit_factor.toFixed(2) : '0.00')} | ${s.winning_trades || 0} رابحة / ${s.losing_trades || 0} خاسرة`);
 
-            document.getElementById('val-max-dd').innerText = (s.max_drawdown_pct || 0).toFixed(1) + '%';
+            setElText('val-max-dd', ((s.max_drawdown_pct || 0)).toFixed(1) + '%');
             const avgMins = s.avg_trade_duration_min || (s.stats ? s.stats.avg_trade_duration_min : 0) || 0;
-            document.getElementById('val-duration').innerText = `متوسط المدة: ${avgMins} دقيقة | ${s.total_trades} صفقات`;
+            setElText('val-duration', `متوسط المدة: ${avgMins} دقيقة | ${s.total_trades || 0} صفقات`);
 
-            document.getElementById('val-btc-price').innerText = '$' + s.btc_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-            document.getElementById('val-btc-sub').innerText = `هوكس: ${s.btc_hawkes.toFixed(4)} | 24h: ${s.btc_24h > 0 ? '+' : ''}${s.btc_24h.toFixed(1)}%`;
+            if (s.btc_price !== undefined) {
+                setElText('val-btc-price', '$' + s.btc_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+            }
+            if (s.btc_hawkes !== undefined) {
+                setElText('val-btc-sub', `هوكس: ${s.btc_hawkes.toFixed(4)} | 24h: ${s.btc_24h > 0 ? '+' : ''}${(s.btc_24h || 0).toFixed(1)}%`);
+            }
             
             const btcBadge = document.getElementById('btc-gate-badge');
-            if (s.is_btc_safe) {
-                btcBadge.innerText = 'آمن 🟢';
-                btcBadge.className = 'text-green';
-            } else {
-                btcBadge.innerText = 'درع هوكس نشط 🛑';
-                btcBadge.className = 'text-red';
+            if (btcBadge) {
+                const btcText = s.is_btc_safe ? 'آمن 🟢' : 'درع هوكس نشط 🛑';
+                const btcCls = s.is_btc_safe ? 'text-green' : 'text-red';
+                if (btcBadge.innerText !== btcText) btcBadge.innerText = btcText;
+                setElClass(btcBadge, btcCls);
             }
 
             // Hawkes Badges
             const hBadgeText = document.getElementById('hawkes-text');
-            hBadgeText.innerText = `هوكس: ${s.btc_hawkes.toFixed(4)} (${s.is_btc_safe ? 'آمن' : 'صدمة!'})`;
-            document.getElementById('badge-hawkes').style.borderColor = s.is_btc_safe ? 'rgba(0, 240, 144, 0.3)' : 'rgba(255, 51, 102, 0.4)';
+            if (hBadgeText && s.btc_hawkes !== undefined) {
+                const hText = `هوكس: ${s.btc_hawkes.toFixed(4)} (${s.is_btc_safe ? 'آمن' : 'صدمة!'})`;
+                if (hBadgeText.innerText !== hText) hBadgeText.innerText = hText;
+            }
+            const badgeH = document.getElementById('badge-hawkes');
+            if (badgeH) {
+                const borderColor = s.is_btc_safe ? 'rgba(0, 240, 144, 0.3)' : 'rgba(255, 51, 102, 0.4)';
+                if (badgeH.style.borderColor !== borderColor) badgeH.style.borderColor = borderColor;
+            }
 
             // Mini monitor in Tab 1
             const miniHVal = document.getElementById('mini-hawkes-val');
-            if (miniHVal) {
-                miniHVal.innerText = s.btc_hawkes.toFixed(4);
-                miniHVal.className = s.is_btc_safe ? 'text-green' : 'text-red';
+            if (miniHVal && s.btc_hawkes !== undefined) {
+                const valStr = s.btc_hawkes.toFixed(4);
+                const valCls = s.is_btc_safe ? 'text-green' : 'text-red';
+                if (miniHVal.innerText !== valStr) miniHVal.innerText = valStr;
+                setElClass(miniHVal, valCls);
             }
             const miniHGate = document.getElementById('mini-hawkes-gate');
             if (miniHGate) {
-                miniHGate.innerText = s.is_btc_safe ? 'مفتوحة (النطاق آمن) 🟢' : 'مغلقة (درع الصدمات مفعل) 🛑';
-                miniHGate.className = s.is_btc_safe ? 'text-green' : 'text-red';
+                const gateText = s.is_btc_safe ? 'مفتوحة (النطاق آمن) 🟢' : 'مغلقة (درع الصدمات مفعل) 🛑';
+                const gateCls = s.is_btc_safe ? 'text-green' : 'text-red';
+                if (miniHGate.innerText !== gateText) miniHGate.innerText = gateText;
+                setElClass(miniHGate, gateCls);
             }
             const miniTrend = document.getElementById('mini-btc-trend');
             if (miniTrend) {
-                miniTrend.innerText = `${s.btc_24h > 0 ? '+' : ''}${s.btc_24h.toFixed(1)}% / ${s.btc_4h > 0 ? '+' : ''}${s.btc_4h.toFixed(1)}%`;
+                const trendStr = `${(s.btc_24h || 0) > 0 ? '+' : ''}${(s.btc_24h || 0).toFixed(1)}% / ${(s.btc_4h || 0) > 0 ? '+' : ''}${(s.btc_4h || 0).toFixed(1)}%`;
+                if (miniTrend.innerText !== trendStr) miniTrend.innerText = trendStr;
             }
 
             // Bot Mode Badge
             const botModeTxt = document.getElementById('bot-mode-text');
             const botModeIcon = document.getElementById('bot-mode-icon');
+            const badgeMode = document.getElementById('badge-bot-mode');
             if (s.is_paused) {
-                botModeTxt.innerText = 'متوقف مؤقتاً (PAUSED)';
-                botModeIcon.innerText = '⏸️';
-                document.getElementById('badge-bot-mode').style.borderColor = 'rgba(251, 191, 36, 0.4)';
+                if (botModeTxt && botModeTxt.innerText !== 'متوقف مؤقتاً (PAUSED)') botModeTxt.innerText = 'متوقف مؤقتاً (PAUSED)';
+                if (botModeIcon && botModeIcon.innerText !== '⏸️') botModeIcon.innerText = '⏸️';
+                if (badgeMode) badgeMode.style.borderColor = 'rgba(251, 191, 36, 0.4)';
             } else {
-                botModeTxt.innerText = 'نشط (ACTIVE)';
-                botModeIcon.innerText = '🟢';
-                document.getElementById('badge-bot-mode').style.borderColor = 'rgba(0, 240, 144, 0.3)';
+                if (botModeTxt && botModeTxt.innerText !== 'نشط (ACTIVE)') botModeTxt.innerText = 'نشط (ACTIVE)';
+                if (botModeIcon && botModeIcon.innerText !== '🟢') botModeIcon.innerText = '🟢';
+                if (badgeMode) badgeMode.style.borderColor = 'rgba(0, 240, 144, 0.3)';
             }
 
             // 2. Render Heatmap (Tab 1)
@@ -1948,6 +2044,43 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 filtered = filtered.filter(x => x.is_candidate === 1 || x.status === 'TRIGGERED');
             }
 
+            // Check if existing cards in container match the filtered items
+            const currentCards = Array.from(container.children);
+            const currentSyms = currentCards.map(c => c.id.replace('hm-card-', ''));
+            const newSyms = filtered.map(x => x.sym);
+
+            if (currentSyms.length === newSyms.length && currentSyms.every((s, i) => s === newSyms[i])) {
+                // In-place update! Prevents DOM recreation & flickering
+                filtered.forEach(item => {
+                    const isPos = item.change_24h >= 0;
+                    const chgSign = isPos ? '+' : '';
+                    const pxEl = document.getElementById('hm-px-' + item.sym);
+                    if (pxEl) {
+                        const pxStr = '$' + formatPx(item.price);
+                        if (pxEl.innerText !== pxStr) pxEl.innerText = pxStr;
+                    }
+                    const chgEl = document.getElementById('hm-chg-' + item.sym);
+                    if (chgEl) {
+                        const chgStr = `${chgSign}${(item.change_24h || 0).toFixed(2)}%`;
+                        const chgCls = 'hm-chg-pill ' + (isPos ? 'pos' : 'neg');
+                        if (chgEl.innerText !== chgStr) chgEl.innerText = chgStr;
+                        setElClass(chgEl, chgCls);
+                    }
+                    const spreadEl = document.getElementById('hm-spread-' + item.sym);
+                    if (spreadEl && item.spread_bps !== undefined) {
+                        const spStr = (item.spread_bps || 0).toFixed(1) + ' bps';
+                        if (spreadEl.innerText !== spStr) spreadEl.innerText = spStr;
+                    }
+                    const metaEl = document.getElementById('hm-meta-' + item.sym);
+                    if (metaEl) {
+                        const statusLabel = item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status);
+                        const metaHtml = `<span>Alpha: <b>${item.score.toFixed(1)}</b></span><span class="badge-status ${item.status}">${statusLabel}</span>`;
+                        if (metaEl.innerHTML !== metaHtml) metaEl.innerHTML = metaHtml;
+                    }
+                });
+                return;
+            }
+
             container.innerHTML = filtered.map(item => {
                 const isPos = item.change_24h >= 0;
                 const chgSign = isPos ? '+' : '';
@@ -1969,7 +2102,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                         <span>فارق: <b id="hm-spread-${item.sym}">${(item.spread_bps || 0).toFixed(1)} bps</b></span>
                         <span>حجم: $${volM}M</span>
                     </div>
-                    <div class="hm-meta">
+                    <div class="hm-meta" id="hm-meta-${item.sym}">
                         <span>Alpha: <b>${item.score.toFixed(1)}</b></span>
                         <span class="badge-status ${item.status}">${item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status)}</span>
                     </div>
@@ -1983,10 +2116,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             if (!list) return;
             const cands = (leaderboard || []).filter(x => x.status !== 'POSITION_OPEN').slice(0, 3);
             if (cands.length === 0) {
-                list.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;text-align:center;padding:10px;">المحرك يفحص الـ 22 عملة...</div>';
+                const emptyHtml = '<div style="color:var(--text-muted);font-size:0.75rem;text-align:center;padding:10px;">المحرك يفحص الـ 22 عملة...</div>';
+                if (list.innerHTML !== emptyHtml) list.innerHTML = emptyHtml;
                 return;
             }
-            list.innerHTML = cands.map((c, i) => `
+            const newHtml = cands.map((c, i) => `
                 <div class="radar-item" onclick="selectMatrixCoin('${c.sym}')" style="cursor: pointer;">
                     <div style="display:flex;align-items:center;gap:8px;">
                         <span style="font-weight:800;color:var(--accent-cyan);">#${i+1}</span>
@@ -1999,145 +2133,185 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     </div>
                 </div>
             `).join('');
+            if (list.innerHTML !== newHtml) list.innerHTML = newHtml;
         }
 
         // Active Positions Card Matrix (Tab 2)
+        function renderPositionCardHtml(p) {
+            const isPos = (p.unrealized_pnl || 0) >= 0;
+            const pnlColor = isPos ? 'text-green' : 'text-red';
+            const pnlSign = isPos ? '+' : '';
+            const stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
+            const dur = calcPositionDuration(p);
+
+            // Progress -2.2% SL to +6.5% TP
+            const pnlProgress = Math.max(0, Math.min(100, (((p.unrealized_pnl_pct || 0) + 2.2) / 8.7) * 100));
+            const fillLeft = (p.unrealized_pnl_pct || 0) >= 0 ? '25.3%' : `${pnlProgress}%`;
+            const fillWidth = (p.unrealized_pnl_pct || 0) >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
+            const barClass = (p.unrealized_pnl_pct || 0) >= 0 ? 'green' : 'red';
+
+            return `
+            <div class="pos-card-hero" id="pos-card-${p.sym}">
+                <div class="pos-head">
+                    <div class="pos-sym-title">
+                        <span>${p.sym}</span>
+                        <span class="badge-status POSITION_OPEN">SPOT 1X CASH</span>
+                        <span id="pos-trail-badge-${p.sym}">${p.trailing_active ? '<span class="badge-status TRIGGERED">حاصد القمم 🏹</span>' : ''}</span>
+                    </div>
+                    <div class="pos-pnl-headline">
+                        <div class="pos-pnl-usd ${pnlColor}" id="pos-pnl-val-${p.sym}">${pnlSign}$${(p.unrealized_pnl || 0).toFixed(2)}</div>
+                        <div class="pos-pnl-pct ${pnlColor}" id="pos-pnl-pct-${p.sym}">${pnlSign}${(p.unrealized_pnl_pct || 0).toFixed(2)}%</div>
+                    </div>
+                </div>
+
+                <div class="pos-details-grid">
+                    <div>سعر الدخول: <b>$${formatPx(p.px)}</b></div>
+                    <div>السعر المباشر: <b id="pos-curr-px-${p.sym}">$${formatPx(p.current_px)}</b></div>
+                    <div>حجم المركز: <b>$${(p.notional || 0).toFixed(2)}</b></div>
+                    <div>أعلى سعر وصله: <b id="pos-high-${p.sym}">$${formatPx(p.highest_seen || p.current_px)}</b></div>
+                    <div>الحماية: <b id="pos-stop-${p.sym}" style="color:${p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${stopText}</b></div>
+                    <div>المدة الحالية: <b id="pos-dur-${p.sym}">${dur.displayStr}</b></div>
+                </div>
+
+                <div class="pos-progress-wrap">
+                    <div class="pos-progress-labels">
+                        <span style="color:var(--accent-red);">-2.2% SL</span>
+                        <span style="color:#94a3b8;">0.0% تعادل</span>
+                        <span style="color:var(--accent-green);">+6.5% TP</span>
+                    </div>
+                    <div class="pos-progress-track">
+                        <div class="pos-zero-line"></div>
+                        <div class="pos-progress-fill ${barClass}" id="pos-prog-fill-${p.sym}" style="left:${fillLeft}; width:${fillWidth};"></div>
+                    </div>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; margin-top:4px;">
+                    <span style="font-size:0.7rem; color:var(--text-sub);">توقيت الدخول: ${(p.entry_time || '').substring(11, 19)} UTC</span>
+                    <button class="btn-action btn-emergency" onclick="closePosition('${p.sym}')">إغلاق يدوي للمركز</button>
+                </div>
+            </div>`;
+        }
+
+        function updatePositionCard(p) {
+            if (!p || !p.sym) return false;
+            const card = document.getElementById('pos-card-' + p.sym);
+            if (!card) return false;
+
+            const isPos = (p.unrealized_pnl || 0) >= 0;
+            const sign = isPos ? '+' : '';
+            const col = isPos ? 'text-green' : 'text-red';
+
+            const pnlVal = document.getElementById('pos-pnl-val-' + p.sym);
+            if (pnlVal) {
+                const valStr = `${sign}$${(p.unrealized_pnl || 0).toFixed(2)}`;
+                const valCls = 'pos-pnl-usd ' + col;
+                if (pnlVal.innerText !== valStr) pnlVal.innerText = valStr;
+                setElClass(pnlVal, valCls);
+            }
+
+            const pnlPct = document.getElementById('pos-pnl-pct-' + p.sym);
+            if (pnlPct) {
+                const pctStr = `${sign}${(p.unrealized_pnl_pct || 0).toFixed(2)}%`;
+                const pctCls = 'pos-pnl-pct ' + col;
+                if (pnlPct.innerText !== pctStr) pnlPct.innerText = pctStr;
+                setElClass(pnlPct, pctCls);
+            }
+
+            const currPx = document.getElementById('pos-curr-px-' + p.sym);
+            if (currPx) {
+                const pxStr = '$' + formatPx(p.current_px);
+                if (currPx.innerText !== pxStr) currPx.innerText = pxStr;
+            }
+
+            const highEl = document.getElementById('pos-high-' + p.sym);
+            if (highEl && p.highest_seen !== undefined) {
+                const highStr = '$' + formatPx(p.highest_seen);
+                if (highEl.innerText !== highStr) highEl.innerText = highStr;
+            }
+
+            const stopEl = document.getElementById('pos-stop-' + p.sym);
+            if (stopEl && p.stop !== undefined) {
+                const stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
+                const stopColor = p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+                if (stopEl.innerText !== stopText) stopEl.innerText = stopText;
+                if (stopEl.style.color !== stopColor) stopEl.style.color = stopColor;
+            }
+
+            const trailBadge = document.getElementById('pos-trail-badge-' + p.sym);
+            if (trailBadge) {
+                const badgeHtml = p.trailing_active ? '<span class="badge-status TRIGGERED">حاصد القمم 🏹</span>' : '';
+                if (trailBadge.innerHTML !== badgeHtml) trailBadge.innerHTML = badgeHtml;
+            }
+
+            const durEl = document.getElementById('pos-dur-' + p.sym);
+            if (durEl) {
+                const dur = calcPositionDuration(p);
+                if (durEl.innerText !== dur.displayStr) durEl.innerText = dur.displayStr;
+            }
+
+            const fill = document.getElementById('pos-prog-fill-' + p.sym);
+            if (fill) {
+                const pnlProgress = Math.max(0, Math.min(100, (((p.unrealized_pnl_pct || 0) + 2.2) / 8.7) * 100));
+                const fillLeft = (p.unrealized_pnl_pct || 0) >= 0 ? '25.3%' : `${pnlProgress}%`;
+                const fillWidth = (p.unrealized_pnl_pct || 0) >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
+                const fillCls = 'pos-progress-fill ' + (isPos ? 'green' : 'red');
+                if (fill.style.left !== fillLeft) fill.style.left = fillLeft;
+                if (fill.style.width !== fillWidth) fill.style.width = fillWidth;
+                setElClass(fill, fillCls);
+            }
+            return true;
+        }
+
         function renderActivePositions(positions) {
             const container = document.getElementById('positions-matrix-container');
             const badgeCount = document.getElementById('pos-matrix-count');
-            badgeCount.innerText = `${positions.length} / 3 خانات مستخدمة`;
+            const posList = positions || [];
+            if (badgeCount) {
+                const badgeText = `${posList.length} / 3 خانات مستخدمة`;
+                if (badgeCount.innerText !== badgeText) badgeCount.innerText = badgeText;
+            }
+            if (!container) return;
 
-            if (positions.length === 0) {
-                container.innerHTML = `
-                <div style="grid-column: 1/-1; text-align: center; padding: 40px 20px; color: var(--text-muted); border: 1px dashed rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.01);">
-                    <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
-                    <div style="font-size: 0.95rem; font-weight: 700; color: #fff;">لا توجد صفقات مفتوحة حالياً</div>
-                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">المحرك يفحص الـ 22 عملة بانتظار استيفاء شروط وايكوف وفيشر مع التحقق من درع هوكس.</div>
-                </div>`;
+            if (posList.length === 0) {
+                if (!container.querySelector('.pos-empty-placeholder')) {
+                    container.innerHTML = `
+                    <div class="pos-empty-placeholder" style="grid-column: 1/-1; text-align: center; padding: 40px 20px; color: var(--text-muted); border: 1px dashed rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.01);">
+                        <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
+                        <div style="font-size: 0.95rem; font-weight: 700; color: #fff;">لا توجد صفقات مفتوحة حالياً</div>
+                        <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">المحرك يفحص الـ 22 عملة بانتظار استيفاء شروط وايكوف وفيشر مع التحقق من درع هوكس.</div>
+                    </div>`;
+                }
                 return;
             }
 
-            container.innerHTML = positions.map(p => {
-                const pnlColor = p.unrealized_pnl >= 0 ? 'text-green' : 'text-red';
-                const pnlSign = p.unrealized_pnl >= 0 ? '+' : '';
-                let stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
+            // Remove empty placeholder if transitioning from 0 to >0 positions
+            const emptyEl = container.querySelector('.pos-empty-placeholder');
+            if (emptyEl) emptyEl.remove();
 
-                // Bars & duration calculation (from bars or elapsed timestamp)
-                let bars = p.held_bars !== undefined ? p.held_bars : (p.bars_held !== undefined ? p.bars_held : 0);
-                let durationMin = p.duration_min !== undefined ? p.duration_min : (bars * 5);
-                if (p.entry_time) {
-                    const entryDate = new Date(p.entry_time);
-                    if (!isNaN(entryDate.getTime())) {
-                        const diffMs = Math.max(0, Date.now() - entryDate.getTime());
-                        const realMins = Math.floor(diffMs / 60000);
-                        if (realMins > durationMin) {
-                            durationMin = realMins;
-                            bars = Math.max(bars, Math.floor(realMins / 5));
-                        }
+            const activeSyms = new Set(posList.map(p => p.sym));
+            // Remove cards for closed positions
+            container.querySelectorAll('.pos-card-hero').forEach(card => {
+                const cardSym = card.id.replace('pos-card-', '');
+                if (!activeSyms.has(cardSym)) card.remove();
+            });
+
+            // Update existing cards in place without DOM recreation, or append new cards
+            posList.forEach(p => {
+                const existing = document.getElementById('pos-card-' + p.sym);
+                if (existing) {
+                    updatePositionCard(p);
+                } else {
+                    const temp = document.createElement('div');
+                    temp.innerHTML = renderPositionCardHtml(p).trim();
+                    if (temp.firstElementChild) {
+                        container.appendChild(temp.firstElementChild);
                     }
                 }
-                const durH = Math.floor(durationMin / 60);
-                const durM = durationMin % 60;
-                const durText = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
-
-                // Progress -2.2% SL to +6.5% TP
-                const pnlProgress = Math.max(0, Math.min(100, ((p.unrealized_pnl_pct + 2.2) / 8.7) * 100));
-                const fillLeft = p.unrealized_pnl_pct >= 0 ? '25.3%' : `${pnlProgress}%`;
-                const fillWidth = p.unrealized_pnl_pct >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
-                const barClass = p.unrealized_pnl_pct >= 0 ? 'green' : 'red';
-
-                return `
-                <div class="pos-card-hero" id="pos-card-${p.sym}">
-                    <div class="pos-head">
-                        <div class="pos-sym-title">
-                            <span>${p.sym}</span>
-                            <span class="badge-status POSITION_OPEN">SPOT 1X CASH</span>
-                            ${p.trailing_active ? '<span class="badge-status TRIGGERED">حاصد القمم 🏹</span>' : ''}
-                        </div>
-                        <div class="pos-pnl-headline">
-                            <div class="pos-pnl-usd ${pnlColor}" id="pos-pnl-val-${p.sym}">${pnlSign}$${p.unrealized_pnl.toFixed(2)}</div>
-                            <div class="pos-pnl-pct ${pnlColor}" id="pos-pnl-pct-${p.sym}">${pnlSign}${p.unrealized_pnl_pct.toFixed(2)}%</div>
-                        </div>
-                    </div>
-
-                    <div class="pos-details-grid">
-                        <div>سعر الدخول: <b>$${formatPx(p.px)}</b></div>
-                        <div>السعر المباشر: <b id="pos-curr-px-${p.sym}">$${formatPx(p.current_px)}</b></div>
-                        <div>حجم المركز: <b>$${p.notional.toFixed(2)}</b></div>
-                        <div>أعلى سعر وصله: <b>$${formatPx(p.highest_seen)}</b></div>
-                        <div>الحماية: <b style="color:${p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${stopText}</b></div>
-                        <div>المدة الحالية: <b id="pos-dur-${p.sym}">${bars} شمعة (${durText})</b></div>
-                    </div>
-
-                    <div class="pos-progress-wrap">
-                        <div class="pos-progress-labels">
-                            <span style="color:var(--accent-red);">-2.2% SL</span>
-                            <span style="color:#94a3b8;">0.0% تعادل</span>
-                            <span style="color:var(--accent-green);">+6.5% TP</span>
-                        </div>
-                        <div class="pos-progress-track">
-                            <div class="pos-zero-line"></div>
-                            <div class="pos-progress-fill ${barClass}" id="pos-prog-fill-${p.sym}" style="left:${fillLeft}; width:${fillWidth};"></div>
-                        </div>
-                    </div>
-
-                    <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; margin-top:4px;">
-                        <span style="font-size:0.7rem; color:var(--text-sub);">توقيت الدخول: ${(p.entry_time || '').substring(11, 19)} UTC</span>
-                        <button class="btn-action btn-emergency" onclick="closePosition('${p.sym}')">إغلاق يدوي للمركز</button>
-                    </div>
-                </div>`;
-            }).join('');
+            });
         }
 
         function updatePositionCardLive(p) {
-            const pnlVal = document.getElementById('pos-pnl-val-' + p.sym);
-            const pnlPct = document.getElementById('pos-pnl-pct-' + p.sym);
-            const currPx = document.getElementById('pos-curr-px-' + p.sym);
-            const fill = document.getElementById('pos-prog-fill-' + p.sym);
-            const durEl = document.getElementById('pos-dur-' + p.sym);
-
-            if (pnlVal && pnlPct && currPx) {
-                const isPos = p.unrealized_pnl >= 0;
-                const sign = isPos ? '+' : '';
-                const col = isPos ? 'text-green' : 'text-red';
-                
-                pnlVal.innerText = `${sign}$${p.unrealized_pnl.toFixed(2)}`;
-                pnlVal.className = 'pos-pnl-usd ' + col;
-
-                pnlPct.innerText = `${sign}${p.unrealized_pnl_pct.toFixed(2)}%`;
-                pnlPct.className = 'pos-pnl-pct ' + col;
-
-                currPx.innerText = '$' + formatPx(p.current_px);
-
-                if (durEl) {
-                    let bars = p.held_bars !== undefined ? p.held_bars : (p.bars_held !== undefined ? p.bars_held : 0);
-                    let durationMin = p.duration_min !== undefined ? p.duration_min : (bars * 5);
-                    if (p.entry_time) {
-                        const entryDate = new Date(p.entry_time);
-                        if (!isNaN(entryDate.getTime())) {
-                            const diffMs = Math.max(0, Date.now() - entryDate.getTime());
-                            const realMins = Math.floor(diffMs / 60000);
-                            if (realMins > durationMin) {
-                                durationMin = realMins;
-                                bars = Math.max(bars, Math.floor(realMins / 5));
-                            }
-                        }
-                    }
-                    const durH = Math.floor(durationMin / 60);
-                    const durM = durationMin % 60;
-                    const durFormatted = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
-                    durEl.innerText = `${bars} شمعة (${durFormatted})`;
-                }
-
-                if (fill) {
-                    const pnlProgress = Math.max(0, Math.min(100, ((p.unrealized_pnl_pct + 2.2) / 8.7) * 100));
-                    const fillLeft = p.unrealized_pnl_pct >= 0 ? '25.3%' : `${pnlProgress}%`;
-                    const fillWidth = p.unrealized_pnl_pct >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
-                    fill.style.left = fillLeft;
-                    fill.style.width = fillWidth;
-                    fill.className = 'pos-progress-fill ' + (isPos ? 'green' : 'red');
-                }
-            }
+            updatePositionCard(p);
         }
 
         // Equity Curve Drawing (Tab 3)
