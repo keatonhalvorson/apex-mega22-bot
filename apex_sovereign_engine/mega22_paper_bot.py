@@ -613,7 +613,8 @@ class Mega22PaperBot:
             "total_roe_pct": round(roe_pct, 2),
             "realized_pnl": stats['net_profit'],
             "sharpe_ratio": stats.get('sharpe_ratio', 0.0),
-            "unrealized_pnl": round(sum(p.unrealized_pnl for p in self.active_positions.values()), 2)
+            "unrealized_pnl": round(sum(p.unrealized_pnl for p in self.active_positions.values()), 2),
+            "server_time_ms": int(time.time() * 1000)
         }
         self._broadcast("tick", tick_payload)
 

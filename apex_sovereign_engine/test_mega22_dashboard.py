@@ -417,14 +417,47 @@ def test_position_to_dict_entry_time_fallback():
     assert d["bars_held"] >= 8
     assert d["duration_min"] >= 40
 
-def test_dashboard_html_contains_safe_duration_and_no_matprice_bug():
-    """Verify that dashboard_server HTML includes calcPositionDuration and fixed tick-dir classList."""
+def test_position_to_dict_never_resets_when_current_bar_index_behind():
+    """Verify that Position.to_dict never wipes held_bars or duration_min to 0 when current_bar_index <= pos.i."""
+    from datetime import datetime, timezone, timedelta
+    past_time = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat()
+    pos = Position(
+        sym="TIAUSDT", px=0.35, notional=320.0, entry_fee=0.13,
+        i=309, entry_time=past_time, held_bars=263
+    )
+    # 1. Called with current_bar_index=0 (e.g. server restart)
+    d1 = pos.to_dict(current_bar_index=0)
+    assert d1["held_bars"] >= 263
+    assert d1["bars_held"] >= 263
+    assert d1["duration_min"] >= 1315
+    assert pos.held_bars >= 263
+
+    # 2. Called with current_bar_index=309 (current_bar_index == pos.i)
+    d2 = pos.to_dict(current_bar_index=309)
+    assert d2["held_bars"] >= 263
+    assert d2["duration_min"] >= 1315
+
+def test_tick_payload_includes_server_time_ms():
+    """Verify that tick payload contains server_time_ms for client clock sync."""
+    bot = Mega22PaperBot()
+    events = []
+    bot.add_listener(lambda ev, d: events.append((ev, d)))
+    bot.on_ticker_update("TIAUSDT", {
+        "c": "0.3600", "p": "0.01", "P": "2.85", "h": "0.37", "l": "0.34",
+        "v": "100500", "q": "251250", "b": "0.3599", "a": "0.3601"
+    })
+    ticks = [d for ev, d in events if ev == "tick"]
+    assert len(ticks) > 0
+    assert "server_time_ms" in ticks[-1]
+    assert ticks[-1]["server_time_ms"] > 0
+
+def test_dashboard_html_contains_nonflickering_heatmap_and_radar():
+    """Verify that dashboard_server HTML includes in-place heatmap and radar updating."""
     from dashboard_server import DASHBOARD_HTML
-    assert "calcPositionDuration" in DASHBOARD_HTML
-    assert "renderPositionCardHtml" in DASHBOARD_HTML
-    assert "pos-empty-placeholder" in DASHBOARD_HTML
-    # Ensure matPrice is not accidentally called in the hmPrice block
-    assert "if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');\n                    else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');\n                }\n                const hmChg" not in DASHBOARD_HTML
+    assert "renderHeatmapCardHtml" in DASHBOARD_HTML
+    assert "updateHeatmapCard" in DASHBOARD_HTML
+    assert "radar-item-" in DASHBOARD_HTML
+    assert "Date.UTC" in DASHBOARD_HTML
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

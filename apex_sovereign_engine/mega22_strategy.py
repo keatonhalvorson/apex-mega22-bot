@@ -41,22 +41,28 @@ class Position:
     held_bars: int = 0
 
     def to_dict(self, current_bar_index: Optional[int] = None) -> Dict[str, Any]:
-        if current_bar_index is not None:
-            bars = max(0, current_bar_index - self.i)
+        time_diff_m = 0
+        time_bars = 0
+        if self.entry_time:
+            try:
+                et = datetime.fromisoformat(self.entry_time.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                time_diff_m = max(0, int((now - et).total_seconds() / 60))
+                time_bars = max(0, time_diff_m // 5)
+            except Exception:
+                pass
+
+        if current_bar_index is not None and current_bar_index > self.i:
+            bars = current_bar_index - self.i
+            duration_min = bars * 5
         elif self.held_bars > 0:
             bars = self.held_bars
+            duration_min = max(bars * 5, time_diff_m)
         else:
-            bars = 0
-            if self.entry_time:
-                try:
-                    et = datetime.fromisoformat(self.entry_time.replace("Z", "+00:00"))
-                    now = datetime.now(timezone.utc)
-                    diff_m = max(0, int((now - et).total_seconds() / 60))
-                    bars = max(0, diff_m // 5)
-                except Exception:
-                    pass
+            bars = time_bars
+            duration_min = max(bars * 5, time_diff_m)
+
         self.held_bars = bars
-        duration_min = bars * 5
         return {
             'sym': self.sym,
             'px': self.px,

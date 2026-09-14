@@ -619,15 +619,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         /* Sub-Second Live Tick Animation */
         @keyframes flashUp {
-            0% { background-color: rgba(0, 240, 144, 0.4); color: #fff; text-shadow: 0 0 8px rgba(0, 240, 144, 0.8); }
-            100% { background-color: transparent; }
+            0% { color: #00f090; text-shadow: 0 0 8px rgba(0, 240, 144, 0.6); }
+            100% { color: inherit; text-shadow: none; }
         }
         @keyframes flashDown {
-            0% { background-color: rgba(255, 51, 102, 0.4); color: #fff; text-shadow: 0 0 8px rgba(255, 51, 102, 0.8); }
-            100% { background-color: transparent; }
+            0% { color: #ff3366; text-shadow: 0 0 8px rgba(255, 51, 102, 0.6); }
+            100% { color: inherit; text-shadow: none; }
         }
-        .tick-up { animation: flashUp 0.65s ease-out; }
-        .tick-down { animation: flashDown 0.65s ease-out; }
+        .tick-up { animation: flashUp 0.75s ease-out; }
+        .tick-down { animation: flashDown 0.75s ease-out; }
 
         /* Filter Pills Strip */
         .filter-strip {
@@ -1731,18 +1731,24 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         function parseEntryTimeMs(timeStr) {
             if (!timeStr) return null;
-            const cleanStr = String(timeStr).replace(/(\.\d{3})\d+/, '$1');
-            const d = new Date(cleanStr);
-            const t = d.getTime();
-            if (!isNaN(t)) return t;
-            const d2 = new Date(timeStr);
-            const t2 = d2.getTime();
-            return !isNaN(t2) ? t2 : null;
+            try {
+                const cleanStr = String(timeStr).replace(/(\.\d{3})\d+/, '$1').replace(/\+00:00$/, 'Z');
+                let t = new Date(cleanStr).getTime();
+                if (!isNaN(t)) return t;
+                t = new Date(timeStr).getTime();
+                if (!isNaN(t)) return t;
+                const m = String(timeStr).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/);
+                if (m) {
+                    const ms = m[7] ? parseInt(m[7].substring(0, 3).padEnd(3, '0'), 10) : 0;
+                    return Date.UTC(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10), parseInt(m[4],10), parseInt(m[5],10), parseInt(m[6],10), ms);
+                }
+            } catch (e) {}
+            return null;
         }
 
         function calcPositionDuration(p) {
-            let bars = (p.held_bars !== undefined && p.held_bars !== null) ? Number(p.held_bars) : (
-                (p.bars_held !== undefined && p.bars_held !== null) ? Number(p.bars_held) : 0
+            let bars = (p.held_bars !== undefined && p.held_bars !== null && Number(p.held_bars) > 0) ? Number(p.held_bars) : (
+                (p.bars_held !== undefined && p.bars_held !== null && Number(p.bars_held) > 0) ? Number(p.bars_held) : 0
             );
             let durationMin = (p.duration_min !== undefined && p.duration_min !== null && Number(p.duration_min) > 0) ? Number(p.duration_min) : (bars * 5);
 
@@ -1760,13 +1766,31 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     }
                 }
             }
+            if (bars === 0 && p.i !== undefined && lastState && lastState.bar_index && lastState.bar_index > p.i) {
+                bars = lastState.bar_index - p.i;
+                if (bars > 0 && durationMin < bars * 5) {
+                    durationMin = bars * 5;
+                }
+            }
             if (bars === 0 && durationMin > 0) {
                 bars = Math.floor(durationMin / 5);
             }
-            const durH = Math.floor(durationMin / 60);
-            const durM = durationMin % 60;
-            const durText = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
-            return { bars, durationMin, durText, displayStr: `${bars} شمعة (${durText})` };
+            if (durationMin === 0 && bars > 0) {
+                durationMin = bars * 5;
+            }
+
+            let durText = '';
+            let displayStr = '';
+            if (durationMin <= 0 && bars === 0) {
+                durText = '<1د';
+                displayStr = '0 شمعة (<1د)';
+            } else {
+                const durH = Math.floor(durationMin / 60);
+                const durM = durationMin % 60;
+                durText = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
+                displayStr = `${bars} شمعة (${durText})`;
+            }
+            return { bars, durationMin, durText, displayStr };
         }
 
         function queueSubsecondTick(tick) {
@@ -1789,14 +1813,25 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 const tick = pendingTicks[sym];
                 tickers[sym] = tick;
 
+                if (tick.server_time_ms) {
+                    lastServerTimeMs = tick.server_time_ms;
+                    lastServerTimeReceivedAt = Date.now();
+                }
+
                 // 1. Update Heatmap Card (DOM batch)
                 const hmPrice = document.getElementById('hm-px-' + sym);
                 if (hmPrice) {
                     const pxStr = '$' + formatPx(tick.price);
-                    if (hmPrice.innerText !== pxStr) hmPrice.innerText = pxStr;
-                    hmPrice.classList.remove('tick-up', 'tick-down');
-                    if (tick.tick_dir === 'up') hmPrice.classList.add('tick-up');
-                    else if (tick.tick_dir === 'down') hmPrice.classList.add('tick-down');
+                    if (hmPrice.innerText !== pxStr) {
+                        hmPrice.innerText = pxStr;
+                        if (tick.prev_price && tick.price > tick.prev_price) {
+                            hmPrice.classList.remove('tick-down');
+                            hmPrice.classList.add('tick-up');
+                        } else if (tick.prev_price && tick.price < tick.prev_price) {
+                            hmPrice.classList.remove('tick-up');
+                            hmPrice.classList.add('tick-down');
+                        }
+                    }
                 }
                 const hmChg = document.getElementById('hm-chg-' + sym);
                 if (hmChg) {
@@ -1815,10 +1850,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 const matPrice = document.getElementById('mat-px-' + sym);
                 if (matPrice) {
                     const pxStr = '$' + formatPx(tick.price);
-                    if (matPrice.innerText !== pxStr) matPrice.innerText = pxStr;
-                    matPrice.classList.remove('tick-up', 'tick-down');
-                    if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');
-                    else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');
+                    if (matPrice.innerText !== pxStr) {
+                        matPrice.innerText = pxStr;
+                        if (tick.prev_price && tick.price > tick.prev_price) {
+                            matPrice.classList.remove('tick-down');
+                            matPrice.classList.add('tick-up');
+                        } else if (tick.prev_price && tick.price < tick.prev_price) {
+                            matPrice.classList.remove('tick-up');
+                            matPrice.classList.add('tick-down');
+                        }
+                    }
                 }
                 const matChg = document.getElementById('mat-chg-' + sym);
                 if (matChg) {
@@ -2010,9 +2051,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             if (s.btc_hawkes_history) {
                 hawkesHistory = s.btc_hawkes_history;
             }
-            drawHawkesGauge(s.btc_hawkes);
-            drawHawkesTrajectory();
-            renderHawkesSensitivityTable(s.leaderboard);
+            const hawkesTab = document.getElementById('tab-hawkes');
+            if (hawkesTab && hawkesTab.classList.contains('active')) {
+                drawHawkesGauge(s.btc_hawkes);
+                drawHawkesTrajectory();
+                renderHawkesSensitivityTable(s.leaderboard);
+            }
 
             // 7. Render Alpha Matrix (Tab 5)
             renderAlphaMatrixTable(s.leaderboard);
@@ -2027,6 +2071,63 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
             if (el) el.classList.add('active');
             if (lastState) renderHeatmap(lastState.leaderboard);
+        }
+
+        function renderHeatmapCardHtml(item) {
+            const isPos = item.change_24h >= 0;
+            const chgSign = isPos ? '+' : '';
+            const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+            const grpLabel = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+            const volM = ((item.vol_quote || 0) / 1000000.0).toFixed(1);
+            const statusLabel = item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status);
+
+            return `
+            <div class="heatmap-card" id="hm-card-${item.sym}" onclick="selectMatrixCoin('${item.sym}')">
+                <div class="hm-sym">
+                    <span>${item.sym.replace('USDT', '')}</span>
+                    <div style="display:flex;gap:4px;align-items:center;">
+                        <span class="badge-grp ${grpClass}">${grpLabel}</span>
+                        <span class="hm-chg-pill ${isPos ? 'pos' : 'neg'}" id="hm-chg-${item.sym}">${chgSign}${(item.change_24h || 0).toFixed(2)}%</span>
+                    </div>
+                </div>
+                <div class="hm-price" id="hm-px-${item.sym}">$${formatPx(item.price)}</div>
+                <div class="hm-l2-depth">
+                    <span>فارق: <b id="hm-spread-${item.sym}">${(item.spread_bps || 0).toFixed(1)} bps</b></span>
+                    <span>حجم: $${volM}M</span>
+                </div>
+                <div class="hm-meta" id="hm-meta-${item.sym}">
+                    <span>Alpha: <b>${item.score.toFixed(1)}</b></span>
+                    <span class="badge-status ${item.status}">${statusLabel}</span>
+                </div>
+            </div>`;
+        }
+
+        function updateHeatmapCard(item) {
+            const isPos = item.change_24h >= 0;
+            const chgSign = isPos ? '+' : '';
+            const pxEl = document.getElementById('hm-px-' + item.sym);
+            if (pxEl) {
+                const pxStr = '$' + formatPx(item.price);
+                if (pxEl.innerText !== pxStr) pxEl.innerText = pxStr;
+            }
+            const chgEl = document.getElementById('hm-chg-' + item.sym);
+            if (chgEl) {
+                const chgStr = `${chgSign}${(item.change_24h || 0).toFixed(2)}%`;
+                const chgCls = 'hm-chg-pill ' + (isPos ? 'pos' : 'neg');
+                if (chgEl.innerText !== chgStr) chgEl.innerText = chgStr;
+                setElClass(chgEl, chgCls);
+            }
+            const spreadEl = document.getElementById('hm-spread-' + item.sym);
+            if (spreadEl && item.spread_bps !== undefined) {
+                const spStr = (item.spread_bps || 0).toFixed(1) + ' bps';
+                if (spreadEl.innerText !== spStr) spreadEl.innerText = spStr;
+            }
+            const metaEl = document.getElementById('hm-meta-' + item.sym);
+            if (metaEl) {
+                const statusLabel = item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status);
+                const metaHtml = `<span>Alpha: <b>${item.score.toFixed(1)}</b></span><span class="badge-status ${item.status}">${statusLabel}</span>`;
+                if (metaEl.innerHTML !== metaHtml) metaEl.innerHTML = metaHtml;
+            }
         }
 
         function renderHeatmap(leaderboard) {
@@ -2044,70 +2145,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 filtered = filtered.filter(x => x.is_candidate === 1 || x.status === 'TRIGGERED');
             }
 
-            // Check if existing cards in container match the filtered items
-            const currentCards = Array.from(container.children);
-            const currentSyms = currentCards.map(c => c.id.replace('hm-card-', ''));
-            const newSyms = filtered.map(x => x.sym);
+            const activeSyms = new Set(filtered.map(x => x.sym));
+            // Remove cards no longer in filter
+            Array.from(container.children).forEach(child => {
+                const sym = child.id.replace('hm-card-', '');
+                if (!activeSyms.has(sym)) child.remove();
+            });
 
-            if (currentSyms.length === newSyms.length && currentSyms.every((s, i) => s === newSyms[i])) {
-                // In-place update! Prevents DOM recreation & flickering
-                filtered.forEach(item => {
-                    const isPos = item.change_24h >= 0;
-                    const chgSign = isPos ? '+' : '';
-                    const pxEl = document.getElementById('hm-px-' + item.sym);
-                    if (pxEl) {
-                        const pxStr = '$' + formatPx(item.price);
-                        if (pxEl.innerText !== pxStr) pxEl.innerText = pxStr;
+            // Update in place and maintain DOM order without destruction
+            filtered.forEach(item => {
+                let card = document.getElementById('hm-card-' + item.sym);
+                if (!card) {
+                    const temp = document.createElement('div');
+                    temp.innerHTML = renderHeatmapCardHtml(item).trim();
+                    if (temp.firstElementChild) {
+                        container.appendChild(temp.firstElementChild);
                     }
-                    const chgEl = document.getElementById('hm-chg-' + item.sym);
-                    if (chgEl) {
-                        const chgStr = `${chgSign}${(item.change_24h || 0).toFixed(2)}%`;
-                        const chgCls = 'hm-chg-pill ' + (isPos ? 'pos' : 'neg');
-                        if (chgEl.innerText !== chgStr) chgEl.innerText = chgStr;
-                        setElClass(chgEl, chgCls);
-                    }
-                    const spreadEl = document.getElementById('hm-spread-' + item.sym);
-                    if (spreadEl && item.spread_bps !== undefined) {
-                        const spStr = (item.spread_bps || 0).toFixed(1) + ' bps';
-                        if (spreadEl.innerText !== spStr) spreadEl.innerText = spStr;
-                    }
-                    const metaEl = document.getElementById('hm-meta-' + item.sym);
-                    if (metaEl) {
-                        const statusLabel = item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status);
-                        const metaHtml = `<span>Alpha: <b>${item.score.toFixed(1)}</b></span><span class="badge-status ${item.status}">${statusLabel}</span>`;
-                        if (metaEl.innerHTML !== metaHtml) metaEl.innerHTML = metaHtml;
-                    }
-                });
-                return;
-            }
-
-            container.innerHTML = filtered.map(item => {
-                const isPos = item.change_24h >= 0;
-                const chgSign = isPos ? '+' : '';
-                const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
-                const grpLabel = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
-                const volM = ((item.vol_quote || 0) / 1000000.0).toFixed(1);
-
-                return `
-                <div class="heatmap-card" id="hm-card-${item.sym}" onclick="selectMatrixCoin('${item.sym}')">
-                    <div class="hm-sym">
-                        <span>${item.sym.replace('USDT', '')}</span>
-                        <div style="display:flex;gap:4px;align-items:center;">
-                            <span class="badge-grp ${grpClass}">${grpLabel}</span>
-                            <span class="hm-chg-pill ${isPos ? 'pos' : 'neg'}" id="hm-chg-${item.sym}">${chgSign}${(item.change_24h || 0).toFixed(2)}%</span>
-                        </div>
-                    </div>
-                    <div class="hm-price" id="hm-px-${item.sym}">$${formatPx(item.price)}</div>
-                    <div class="hm-l2-depth">
-                        <span>فارق: <b id="hm-spread-${item.sym}">${(item.spread_bps || 0).toFixed(1)} bps</b></span>
-                        <span>حجم: $${volM}M</span>
-                    </div>
-                    <div class="hm-meta" id="hm-meta-${item.sym}">
-                        <span>Alpha: <b>${item.score.toFixed(1)}</b></span>
-                        <span class="badge-status ${item.status}">${item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status)}</span>
-                    </div>
-                </div>`;
-            }).join('');
+                } else {
+                    updateHeatmapCard(item);
+                    container.appendChild(card); // Reorder existing DOM element smoothly
+                }
+            });
         }
 
         // Top 3 Opportunities Radar
@@ -2120,8 +2178,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 if (list.innerHTML !== emptyHtml) list.innerHTML = emptyHtml;
                 return;
             }
-            const newHtml = cands.map((c, i) => `
-                <div class="radar-item" onclick="selectMatrixCoin('${c.sym}')" style="cursor: pointer;">
+            if (list.querySelector('.radar-item') === null) {
+                list.innerHTML = '';
+            }
+            cands.forEach((c, i) => {
+                let item = document.getElementById('radar-item-' + i);
+                if (!item) {
+                    item = document.createElement('div');
+                    item.id = 'radar-item-' + i;
+                    item.className = 'radar-item';
+                    item.style.cursor = 'pointer';
+                    list.appendChild(item);
+                }
+                item.onclick = () => selectMatrixCoin(c.sym);
+                const scoreColor = c.score > 20 ? 'var(--accent-green)' : 'var(--accent-cyan)';
+                const newHtml = `
                     <div style="display:flex;align-items:center;gap:8px;">
                         <span style="font-weight:800;color:var(--accent-cyan);">#${i+1}</span>
                         <span style="font-weight:800;color:#fff;">${c.sym}</span>
@@ -2129,11 +2200,14 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     </div>
                     <div style="display:flex;gap:12px;align-items:center;">
                         <span style="color:var(--text-muted);">$${formatPx(c.price)}</span>
-                        <span style="font-weight:800;color:${c.score > 20 ? 'var(--accent-green)' : 'var(--accent-cyan)'};">Alpha: ${c.score.toFixed(1)}</span>
+                        <span style="font-weight:800;color:${scoreColor};">Alpha: ${c.score.toFixed(1)}</span>
                     </div>
-                </div>
-            `).join('');
-            if (list.innerHTML !== newHtml) list.innerHTML = newHtml;
+                `;
+                if (item.innerHTML !== newHtml) item.innerHTML = newHtml;
+            });
+            while (list.children.length > cands.length) {
+                list.lastElementChild.remove();
+            }
         }
 
         // Active Positions Card Matrix (Tab 2)
@@ -2336,7 +2410,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 const lastIdx = equityHistory.length - 1;
                 equityHistory[lastIdx] = {t: new Date().toLocaleTimeString('en-GB'), equity: s.equity};
             }
-            drawEquityChart();
+            const tab = document.getElementById('tab-analytics');
+            if (tab && tab.classList.contains('active')) {
+                drawEquityChart();
+            }
         }
 
         function drawEquityChart() {
@@ -2685,6 +2762,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         // Cross-Sectional Shock Sensitivity Table
         function renderHawkesSensitivityTable(leaderboard) {
+            const tab = document.getElementById('tab-hawkes');
+            if (!tab || !tab.classList.contains('active')) return;
             const tbody = document.getElementById('hawkes-matrix-tbody');
             if (!tbody) return;
             const items = leaderboard || [];
@@ -2713,7 +2792,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         let matrixData = [];
         function renderAlphaMatrixTable(leaderboard) {
             matrixData = leaderboard || [];
-            applyMatrixFilterAndSort();
+            const tab = document.getElementById('tab-matrix');
+            if (tab && tab.classList.contains('active')) {
+                applyMatrixFilterAndSort();
+            }
         }
 
         function applyMatrixFilterAndSort() {
@@ -2769,9 +2851,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         // TAB 6: Trade Ledger Table
         let ledgerData = [];
+        let lastLedgerHash = '';
         function renderTradeLedger(trades) {
             ledgerData = trades || [];
-            applyLedgerFilter();
+            const tab = document.getElementById('tab-ledger');
+            if (!tab || !tab.classList.contains('active')) return;
+            const currentHash = trades.length + ':' + (trades.length > 0 ? (trades[trades.length-1].exit_time || '') : '');
+            if (currentHash !== lastLedgerHash) {
+                lastLedgerHash = currentHash;
+                applyLedgerFilter();
+            }
         }
 
         function applyLedgerFilter() {
@@ -2858,13 +2947,21 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.querySelectorAll('.tab-content').forEach(p => {
                 p.classList.toggle('active', p.id === tabId);
             });
-            if (tabId === 'tab-analytics') {
+            if (tabId === 'tab-matrix') {
+                applyMatrixFilterAndSort();
+            } else if (tabId === 'tab-analytics') {
                 setTimeout(drawEquityChart, 60);
             } else if (tabId === 'tab-hawkes') {
                 setTimeout(() => {
-                    if (lastState) drawHawkesGauge(lastState.btc_hawkes);
+                    if (lastState) {
+                        drawHawkesGauge(lastState.btc_hawkes);
+                        renderHawkesSensitivityTable(lastState.leaderboard);
+                    }
                     drawHawkesTrajectory();
                 }, 60);
+            } else if (tabId === 'tab-ledger') {
+                lastLedgerHash = '';
+                applyLedgerFilter();
             }
         }
 
