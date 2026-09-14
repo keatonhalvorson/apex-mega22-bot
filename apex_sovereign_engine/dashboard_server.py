@@ -1670,11 +1670,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                         renderDashboard(msg.data);
                     } else if (msg.type === 'tick') {
                         queueSubsecondTick(msg.data);
-                    } else if (msg.type === 'pong') {
+                    } else if (msg.type === 'pong' && msg.client_t) {
                         const now = Date.now();
-                        const rtt = now - msg.client_t;
-                        const pingEl = document.getElementById('ping-text');
-                        if (rtt >= 0 && rtt <= 2500) {
+                        const rtt = Math.max(1, now - msg.client_t);
+                        // If rtt is reasonable (< 5000ms), update UI. If from old wake-up (> 5000ms), simply ignore this sample.
+                        if (rtt < 5000) {
+                            const pingEl = document.getElementById('ping-text');
                             if (pingEl) pingEl.innerText = `${rtt} ms`;
                             const badge = document.getElementById('badge-ping');
                             if (badge) {
@@ -1682,10 +1683,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                                 else if (rtt < 400) badge.style.borderColor = 'rgba(255, 170, 0, 0.3)';
                                 else badge.style.borderColor = 'rgba(255, 51, 102, 0.3)';
                             }
-                        } else {
-                            // Stale ping from background tab sleep or container restart; trigger fresh ping immediately
-                            if (pingEl) pingEl.innerText = `~150 ms`;
-                            sendPing();
                         }
                     } else if (msg.type === 'log') {
                         appendConsoleLog(msg.data);
@@ -1734,7 +1731,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    sendPing();
+                    if (Date.now() - lastPingSent > 1000) {
+                        sendPing();
+                    }
                 } else if (!ws || ws.readyState === WebSocket.CLOSED) {
                     connectWS();
                 }

@@ -459,5 +459,62 @@ def test_dashboard_html_contains_nonflickering_heatmap_and_radar():
     assert "radar-item-" in DASHBOARD_HTML
     assert "Date.UTC" in DASHBOARD_HTML
 
+def test_tick_broadcasting_throttled_per_symbol():
+    """Verify that rapid tick bursts for the same symbol are throttled to 250ms, while maintaining state and independent symbols."""
+    bot = Mega22PaperBot(tick_broadcast_interval=0.25)
+    events = []
+    bot.add_listener(lambda ev, d: events.append((ev, d)))
+
+    # 1. First tick for NEARUSDT -> should broadcast
+    bot.on_ticker_update("NEARUSDT", {
+        "c": "2.50", "p": "0.01", "P": "1.0", "h": "2.60", "l": "2.40",
+        "v": "100", "q": "250", "b": "2.49", "a": "2.51"
+    })
+    near_ticks = [d for ev, d in events if ev == "tick" and d["sym"] == "NEARUSDT"]
+    assert len(near_ticks) == 1
+
+    # 2. Immediate second tick for NEARUSDT (within <250ms) -> throttled from broadcast
+    bot.on_ticker_update("NEARUSDT", {
+        "c": "2.55", "p": "0.06", "P": "2.0", "h": "2.60", "l": "2.40",
+        "v": "105", "q": "260", "b": "2.54", "a": "2.56"
+    })
+    near_ticks_2 = [d for ev, d in events if ev == "tick" and d["sym"] == "NEARUSDT"]
+    assert len(near_ticks_2) == 1  # Not broadcasted
+    # But internal state MUST still be updated!
+    assert bot.latest_prices["NEARUSDT"] == 2.55
+    assert bot.latest_tickers["NEARUSDT"]["price"] == 2.55
+
+    # 3. Tick for a different symbol (ICPUSDT) -> should broadcast independently
+    bot.on_ticker_update("ICPUSDT", {
+        "c": "8.50", "p": "0.10", "P": "1.5", "h": "8.60", "l": "8.40",
+        "v": "100", "q": "850", "b": "8.49", "a": "8.51"
+    })
+    icp_ticks = [d for ev, d in events if ev == "tick" and d["sym"] == "ICPUSDT"]
+    assert len(icp_ticks) == 1
+
+    # 4. Wait for throttle interval to expire (>= 250ms)
+    time.sleep(0.26)
+    bot.on_ticker_update("NEARUSDT", {
+        "c": "2.60", "p": "0.11", "P": "2.5", "h": "2.65", "l": "2.40",
+        "v": "110", "q": "270", "b": "2.59", "a": "2.61"
+    })
+    near_ticks_3 = [d for ev, d in events if ev == "tick" and d["sym"] == "NEARUSDT"]
+    assert len(near_ticks_3) == 2
+    assert near_ticks_3[-1]["price"] == 2.60
+
+def test_dashboard_html_no_recursive_ping_storm():
+    """Verify that dashboard HTML contains no recursive ping storm in pong handler and checks RTT sanity."""
+    from dashboard_server import DASHBOARD_HTML
+    import re
+    # Extract pong handler block
+    pong_match = re.search(r"else if\s*\(msg\.type\s*===\s*'pong'[\s\S]*?\}(?=\s*else if|\s*\}\s*catch)", DASHBOARD_HTML)
+    assert pong_match is not None, "Pong handler block must be present"
+    pong_block = pong_match.group(0)
+
+    # Must NOT call sendPing() anywhere inside the pong handler
+    assert "sendPing()" not in pong_block, "CRITICAL: sendPing() must never be called inside pong handler to prevent ping storms"
+    assert "Math.max(1, now - msg.client_t)" in pong_block
+    assert "rtt < 5000" in pong_block
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

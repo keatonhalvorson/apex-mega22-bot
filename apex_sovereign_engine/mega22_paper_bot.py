@@ -54,8 +54,10 @@ class Mega22PaperBot:
     Production-Grade Real-Time Spot Paper Trading Bot.
     Runs asynchronously, maintaining fixed-size ring buffers in memory.
     """
-    def __init__(self, journal_path: Path = JOURNAL_FILE):
+    def __init__(self, journal_path: Path = JOURNAL_FILE, tick_broadcast_interval: float = 0.25):
         self.journal_path = journal_path
+        self.tick_broadcast_interval: float = tick_broadcast_interval
+        self._last_tick_broadcast: Dict[str, float] = {}
         self.capital: float = INITIAL_CAPITAL
         self.available_cash: float = INITIAL_CAPITAL
         self.active_positions: Dict[str, Position] = {}
@@ -584,10 +586,22 @@ class Mega22PaperBot:
             # Immediately evaluate dynamic profit lock, trailing ratchet, or stop loss with live tick price c
             self.on_tick_update(symbol, c, c, c)
             
-        # Broadcast tick event for instantaneous UI flash & floating PnL update
-        pos_d = self.active_positions[symbol].to_dict(current_bar_index=self.bar_index) if symbol in self.active_positions else None
+        # Always update total portfolio equity & capital with latest tick price
         equity = self.get_total_equity()
         self.capital = round(equity, 2)
+
+        # Do not compute payload or broadcast if no listeners or throttled (< 250ms per symbol)
+        if not self.listeners:
+            return
+
+        if self.tick_broadcast_interval > 0:
+            now_ts = time.time()
+            if (now_ts - self._last_tick_broadcast.get(symbol, 0.0)) < self.tick_broadcast_interval:
+                return
+            self._last_tick_broadcast[symbol] = now_ts
+
+        # Broadcast tick event for instantaneous UI flash & floating PnL update
+        pos_d = self.active_positions[symbol].to_dict(current_bar_index=self.bar_index) if symbol in self.active_positions else None
         total_pnl = equity - INITIAL_CAPITAL
         roe_pct = (total_pnl / INITIAL_CAPITAL) * 100.0
         stats = self.get_summary_stats()
