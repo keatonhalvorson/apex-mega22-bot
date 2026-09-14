@@ -459,9 +459,10 @@ def test_dashboard_html_contains_nonflickering_heatmap_and_radar():
     assert "radar-item-" in DASHBOARD_HTML
     assert "Date.UTC" in DASHBOARD_HTML
 
-def test_tick_broadcasting_throttled_per_symbol():
+def test_tick_broadcasting_throttled_per_symbol(tmp_path):
     """Verify that rapid tick bursts for the same symbol are throttled to 250ms, while maintaining state and independent symbols."""
-    bot = Mega22PaperBot(tick_broadcast_interval=0.25)
+    journal = tmp_path / "journal.json"
+    bot = Mega22PaperBot(journal_path=journal, tick_broadcast_interval=0.25)
     events = []
     bot.add_listener(lambda ev, d: events.append((ev, d)))
 
@@ -515,6 +516,27 @@ def test_dashboard_html_no_recursive_ping_storm():
     assert "sendPing()" not in pong_block, "CRITICAL: sendPing() must never be called inside pong handler to prevent ping storms"
     assert "Math.max(1, now - msg.client_t)" in pong_block
     assert "rtt < 5000" in pong_block
+
+def test_dashboard_html_ping_matching_and_watchdog():
+    """Verify that dashboard HTML tracks lastPingSentTime, checks matching on pong, and has watchdog."""
+    from dashboard_server import DASHBOARD_HTML
+    assert "lastPingSentTime" in DASHBOARD_HTML
+    assert "msg.client_t === lastPingSentTime" in DASHBOARD_HTML
+    assert "lastPongReceived" in DASHBOARD_HTML
+    assert "ws.close()" in DASHBOARD_HTML
+
+def test_reset_portfolio_clears_tick_broadcast_cache(tmp_path):
+    """Verify that resetting portfolio clears the tick broadcast throttling timestamps."""
+    journal = tmp_path / "journal.json"
+    bot = Mega22PaperBot(journal_path=journal, tick_broadcast_interval=0.25)
+    bot.add_listener(lambda ev, d: None)
+    bot.on_ticker_update("TIAUSDT", {
+        "c": "0.35", "p": "0.01", "P": "1.0", "h": "0.36", "l": "0.34",
+        "v": "1000", "q": "350", "b": "0.349", "a": "0.351"
+    })
+    assert "TIAUSDT" in bot._last_tick_broadcast
+    bot.reset_portfolio()
+    assert len(bot._last_tick_broadcast) == 0
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -52,9 +52,13 @@ def websocket_event_handler(event_type: str, data: dict):
     """Callback from bot to immediately push events to all connected dashboard browsers."""
     if not connected_websockets:
         return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
     message = json.dumps({"type": event_type, "data": data})
     for ws in list(connected_websockets):
-        asyncio.create_task(_safe_send_ws(ws, message))
+        loop.create_task(_safe_send_ws(ws, message))
 
 bot.add_listener(websocket_event_handler)
 
@@ -1554,7 +1558,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         let equityHistory = [];
         let hawkesHistory = [];
         let pingInterval = null;
+        let lastPingSentTime = 0;
         let lastPingSent = 0;
+        let lastPongReceived = Date.now();
         let soundEnabled = localStorage.getItem('apex_sound') !== 'false';
         let isPausedState = false;
         let heatmapFilterMode = 'all';
@@ -1658,6 +1664,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('ws-pulse').className = 'pulse-dot';
                 document.getElementById('ws-text').innerText = 'بث لحظي مباشر (Binance Spot L2)';
                 document.getElementById('badge-ws').style.borderColor = 'rgba(0, 240, 144, 0.3)';
+                lastPongReceived = Date.now();
                 if (pingInterval) clearInterval(pingInterval);
                 pingInterval = setInterval(sendPing, 3000);
                 sendPing();
@@ -1665,23 +1672,27 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
             ws.onmessage = (event) => {
                 try {
+                    lastPongReceived = Date.now();
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'state_snapshot') {
                         renderDashboard(msg.data);
                     } else if (msg.type === 'tick') {
                         queueSubsecondTick(msg.data);
                     } else if (msg.type === 'pong' && msg.client_t) {
-                        const now = Date.now();
-                        const rtt = Math.max(1, now - msg.client_t);
-                        // If rtt is reasonable (< 5000ms), update UI. If from old wake-up (> 5000ms), simply ignore this sample.
-                        if (rtt < 5000) {
-                            const pingEl = document.getElementById('ping-text');
-                            if (pingEl) pingEl.innerText = `${rtt} ms`;
-                            const badge = document.getElementById('badge-ping');
-                            if (badge) {
-                                if (rtt < 150) badge.style.borderColor = 'rgba(0, 240, 144, 0.3)';
-                                else if (rtt < 400) badge.style.borderColor = 'rgba(255, 170, 0, 0.3)';
-                                else badge.style.borderColor = 'rgba(255, 51, 102, 0.3)';
+                        // Store lastPingSentTime and only update UI when matching the current ping
+                        if (msg.client_t === lastPingSentTime || !lastPingSentTime) {
+                            const now = Date.now();
+                            const rtt = Math.max(1, now - msg.client_t);
+                            // If rtt is reasonable (< 5000ms), update UI. If from old wake-up (> 5000ms), simply ignore this sample.
+                            if (rtt < 5000) {
+                                const pingEl = document.getElementById('ping-text');
+                                if (pingEl) pingEl.innerText = `${rtt} ms`;
+                                const badge = document.getElementById('badge-ping');
+                                if (badge) {
+                                    if (rtt < 150) badge.style.borderColor = 'rgba(0, 240, 144, 0.3)';
+                                    else if (rtt < 400) badge.style.borderColor = 'rgba(255, 170, 0, 0.3)';
+                                    else badge.style.borderColor = 'rgba(255, 51, 102, 0.3)';
+                                }
                             }
                         }
                     } else if (msg.type === 'log') {
@@ -1722,8 +1733,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         function sendPing() {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                lastPingSent = Date.now();
-                ws.send(JSON.stringify({action: 'ping', t: lastPingSent}));
+                if (lastPongReceived && (Date.now() - lastPongReceived > 15000)) {
+                    // Connection is stalled or half-open; force clean reconnect
+                    console.warn('WebSocket watchdog: no pong for 15s, reconnecting...');
+                    try { ws.close(); } catch (_) {}
+                    return;
+                }
+                lastPingSentTime = Date.now();
+                lastPingSent = lastPingSentTime;
+                ws.send(JSON.stringify({action: 'ping', t: lastPingSentTime}));
             }
         }
 
@@ -1731,7 +1749,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         document.addEventListener('visibilitychange', () => {
             if (document.visibilityState === 'visible') {
                 if (ws && ws.readyState === WebSocket.OPEN) {
-                    if (Date.now() - lastPingSent > 1000) {
+                    if (Date.now() - lastPingSentTime > 1000) {
                         sendPing();
                     }
                 } else if (!ws || ws.readyState === WebSocket.CLOSED) {

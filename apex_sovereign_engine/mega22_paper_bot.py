@@ -887,6 +887,7 @@ class Mega22PaperBot:
         self.consecutive_stops = 0
         self.stoploss_guard_until = -1
         self.cooldowns = {s: -1 for s in MEGA_22}
+        self._last_tick_broadcast.clear()
         self._closed_candles_in_interval.clear()
         self._processed_intervals.clear()
         for task in self._pending_debounce_tasks.values():
