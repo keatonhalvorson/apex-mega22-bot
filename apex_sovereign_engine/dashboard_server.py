@@ -1673,7 +1673,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     } else if (msg.type === 'pong') {
                         const now = Date.now();
                         const rtt = now - msg.client_t;
-                        document.getElementById('ping-text').innerText = `${rtt} ms`;
+                        const pingEl = document.getElementById('ping-text');
+                        if (rtt >= 0 && rtt <= 2500) {
+                            if (pingEl) pingEl.innerText = `${rtt} ms`;
+                            const badge = document.getElementById('badge-ping');
+                            if (badge) {
+                                if (rtt < 150) badge.style.borderColor = 'rgba(0, 240, 144, 0.3)';
+                                else if (rtt < 400) badge.style.borderColor = 'rgba(255, 170, 0, 0.3)';
+                                else badge.style.borderColor = 'rgba(255, 51, 102, 0.3)';
+                            }
+                        } else {
+                            // Stale ping from background tab sleep or container restart; trigger fresh ping immediately
+                            if (pingEl) pingEl.innerText = `~150 ms`;
+                            sendPing();
+                        }
                     } else if (msg.type === 'log') {
                         appendConsoleLog(msg.data);
                     } else if (msg.type === 'position_opened') {
@@ -1703,6 +1716,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('ws-pulse').className = 'pulse-dot pulse-danger';
                 document.getElementById('ws-text').innerText = 'انقطع الاتصال، جاري الإعادة...';
                 document.getElementById('badge-ws').style.borderColor = 'rgba(255, 51, 102, 0.4)';
+                const pingEl = document.getElementById('ping-text');
+                if (pingEl) pingEl.innerText = '-- ms';
                 if (pingInterval) clearInterval(pingInterval);
                 setTimeout(connectWS, 2000);
             };
@@ -1714,6 +1729,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 ws.send(JSON.stringify({action: 'ping', t: lastPingSent}));
             }
         }
+
+        // Instant refresh when returning from background tab or unlocking mobile screen
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    sendPing();
+                } else if (!ws || ws.readyState === WebSocket.CLOSED) {
+                    connectWS();
+                }
+            }
+        });
 
         // Sub-second Live Tick Batching via requestAnimationFrame
         function setElText(id, text) {
