@@ -54,10 +54,8 @@ class Mega22PaperBot:
     Production-Grade Real-Time Spot Paper Trading Bot.
     Runs asynchronously, maintaining fixed-size ring buffers in memory.
     """
-    def __init__(self, journal_path: Path = JOURNAL_FILE, tick_broadcast_interval: float = 0.25):
+    def __init__(self, journal_path: Path = JOURNAL_FILE):
         self.journal_path = journal_path
-        self.tick_broadcast_interval: float = tick_broadcast_interval
-        self._last_tick_broadcast: Dict[str, float] = {}
         self.capital: float = INITIAL_CAPITAL
         self.available_cash: float = INITIAL_CAPITAL
         self.active_positions: Dict[str, Position] = {}
@@ -163,32 +161,27 @@ class Mega22PaperBot:
             raw_pos = data.get("active_positions", {})
             self.active_positions = {}
             for sym, pos_d in raw_pos.items():
-                pos = Position.from_dict(pos_d)
-                if self.bar_index >= pos.i:
-                    pos.held_bars = max(pos.held_bars, self.bar_index - pos.i)
-                self.active_positions[sym] = pos
+                self.active_positions[sym] = Position.from_dict(pos_d)
                 
             raw_hist = data.get("history", [])
-            self.trade_history = [TradeRecord.from_dict(t) for t in raw_hist]
-            self.capital = round(self.get_total_equity(), 2)
+            self.trade_history = [TradeRecord(**t) for t in raw_hist]
             self.log_event(f"Loaded journal: Cash=${self.available_cash:.2f}, {len(self.active_positions)} open positions, {len(self.trade_history)} closed trades (Bar Index: {self.bar_index}).")
         except Exception as e:
-            logger.error(f"Error loading journal: {e}. Preserving journal file on disk.")
+            logger.error(f"Error loading journal: {e}. Starting fresh.")
+            self._save_journal()
 
     def _save_journal(self):
         """Atomically saves portfolio state to disk."""
         try:
-            total_eq = round(self.get_total_equity(), 2)
-            self.capital = total_eq
             state = {
                 "last_update": datetime.now(timezone.utc).isoformat(),
-                "capital": total_eq,
+                "capital": round(self.get_total_equity(), 2),
                 "available_cash": round(self.available_cash, 2),
                 "bar_index": self.bar_index,
                 "consecutive_stops": self.consecutive_stops,
                 "stoploss_guard_until": self.stoploss_guard_until,
                 "cooldowns": self.cooldowns,
-                "active_positions": {s: p.to_dict(current_bar_index=self.bar_index) for s, p in self.active_positions.items()},
+                "active_positions": {s: p.to_dict() for s, p in self.active_positions.items()},
                 "history": [t.to_dict() for t in self.trade_history],
                 "stats": self.get_summary_stats()
             }
@@ -586,25 +579,11 @@ class Mega22PaperBot:
             # Immediately evaluate dynamic profit lock, trailing ratchet, or stop loss with live tick price c
             self.on_tick_update(symbol, c, c, c)
             
-        # Always update total portfolio equity & capital with latest tick price
-        equity = self.get_total_equity()
-        self.capital = round(equity, 2)
-
-        # Do not compute payload or broadcast if no listeners or throttled (< 250ms per symbol)
-        if not self.listeners:
-            return
-
-        if self.tick_broadcast_interval > 0:
-            now_ts = time.time()
-            if (now_ts - self._last_tick_broadcast.get(symbol, 0.0)) < self.tick_broadcast_interval:
-                return
-            self._last_tick_broadcast[symbol] = now_ts
-
         # Broadcast tick event for instantaneous UI flash & floating PnL update
-        pos_d = self.active_positions[symbol].to_dict(current_bar_index=self.bar_index) if symbol in self.active_positions else None
+        pos_d = self.active_positions[symbol].to_dict() if symbol in self.active_positions else None
+        equity = self.get_total_equity()
         total_pnl = equity - INITIAL_CAPITAL
         roe_pct = (total_pnl / INITIAL_CAPITAL) * 100.0
-        stats = self.get_summary_stats()
         tick_payload = {
             "sym": symbol,
             "price": c,
@@ -620,15 +599,9 @@ class Mega22PaperBot:
             "group": group,
             "pos": pos_d,
             "equity": round(equity, 2),
-            "capital": round(equity, 2),
-            "total_pnl": round(total_pnl, 2),
             "net_profit": round(total_pnl, 2),
             "roe_pct": round(roe_pct, 2),
-            "total_roe_pct": round(roe_pct, 2),
-            "realized_pnl": stats['net_profit'],
-            "sharpe_ratio": stats.get('sharpe_ratio', 0.0),
-            "unrealized_pnl": round(sum(p.unrealized_pnl for p in self.active_positions.values()), 2),
-            "server_time_ms": int(time.time() * 1000)
+            "unrealized_pnl": round(sum(p.unrealized_pnl for p in self.active_positions.values()), 2)
         }
         self._broadcast("tick", tick_payload)
 
@@ -727,8 +700,6 @@ class Mega22PaperBot:
         self._closed_candles_in_interval.pop(interval_t, None)
         
         self.bar_index += 1
-        for p in self.active_positions.values():
-            p.held_bars = max(0, self.bar_index - p.i)
         self.update_all_indicators()
         self._evaluate_portfolio_entries()
         self._save_journal()
@@ -753,7 +724,6 @@ class Mega22PaperBot:
         
         # Cash update: refund notional + gross - exit_fee
         self.available_cash += (pos.notional + gross - exit_fee)
-        self.capital = round(self.get_total_equity(), 2)
         
         # Cooldown management
         if 'STOP_LOSS' in reason:
@@ -780,8 +750,8 @@ class Mega22PaperBot:
             entry_fee=entry_fee,
             exit_fee=exit_fee,
             reason=reason,
-            bars_held=max(0, self.bar_index - pos.i),
-            cap_after=round(self.get_total_equity(), 2)
+            bars_held=self.bar_index - pos.i,
+            cap_after=self.get_total_equity()
         )
         self.trade_history.append(trade)
         self._cached_stats = None
@@ -887,7 +857,6 @@ class Mega22PaperBot:
         self.consecutive_stops = 0
         self.stoploss_guard_until = -1
         self.cooldowns = {s: -1 for s in MEGA_22}
-        self._last_tick_broadcast.clear()
         self._closed_candles_in_interval.clear()
         self._processed_intervals.clear()
         for task in self._pending_debounce_tasks.values():
@@ -1024,15 +993,12 @@ class Mega22PaperBot:
             "bar_index": self.bar_index,
             "is_paused": self.is_paused,
             "equity": round(equity, 2),
-            "capital": round(equity, 2),
             "available_cash": round(self.available_cash, 2),
             "unrealized_pnl": round(unrealized, 2),
             "total_pnl": round(total_pnl, 2),
             "total_roe_pct": round(total_roe, 2),
-            "net_profit": round(total_pnl, 2),
-            "realized_pnl": stats['net_profit'],
-            "roe_pct": round(total_roe, 2),
-            "realized_roe_pct": stats['roe_pct'],
+            "net_profit": stats['net_profit'],
+            "roe_pct": stats['roe_pct'],
             "win_rate": stats['win_rate'],
             "profit_factor": stats['profit_factor'],
             "sharpe_ratio": stats.get('sharpe_ratio', 0.0),
@@ -1068,7 +1034,7 @@ class Mega22PaperBot:
             "golden_11": GOLDEN_11,
             "titan_11": TITAN_11,
             "global_guard_active": self.bar_index <= self.stoploss_guard_until,
-            "active_positions": [p.to_dict(current_bar_index=self.bar_index) for p in self.active_positions.values()],
+            "active_positions": [p.to_dict() for p in self.active_positions.values()],
             "recent_trades": [t.to_dict() for t in self.trade_history[-20:]],
             "leaderboard": leaderboard,
             "tickers": self.latest_tickers,

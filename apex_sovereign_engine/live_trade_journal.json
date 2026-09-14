@@ -1,8 +1,8 @@
 {
-  "last_update": "2026-09-14T19:29:27.898697+00:00",
-  "capital": 1023.17,
+  "last_update": "2026-09-14T21:00:00.000000+00:00",
+  "capital": 1023.72,
   "available_cash": 688.78,
-  "bar_index": 572,
+  "bar_index": 584,
   "consecutive_stops": 0,
   "stoploss_guard_until": -1,
   "cooldowns": {
@@ -40,14 +40,11 @@
       "stop": -0.029245470383492855,
       "trailing_active": true,
       "highest_since_trail": 0.3668,
-      "highest_seen": 0.3668,
+      "highest_seen": 0.3687,
       "lowest_seen": 0.3482,
-      "current_px": 0.3635,
-      "unrealized_pnl": 10.334445299772174,
-      "unrealized_pnl_pct": 3.187766762377216,
-      "held_bars": 263,
-      "bars_held": 263,
-      "duration_min": 1315
+      "current_px": 0.3641,
+      "unrealized_pnl": 10.886618953937003,
+      "unrealized_pnl_pct": 3.3580904489175873
     }
   },
   "history": [
@@ -113,23 +110,6 @@
     "max_consecutive_wins": 1,
     "max_consecutive_losses": 1,
     "recovery_factor": 1.76,
-    "last_trade": {
-      "sym": "FILUSDT",
-      "entry_time": "2026-09-13T22:05:03.643716+00:00",
-      "exit_time": "2026-09-13T22:06:17.175526+00:00",
-      "entry_i": 308,
-      "exit_i": 308,
-      "entry_px": 0.959392,
-      "exit_px": 0.938285,
-      "pnl_pct": -2.2,
-      "notional": 326.57,
-      "gross": -7.1846,
-      "net": -7.4459,
-      "entry_fee": 0.1306,
-      "exit_fee": 0.1306,
-      "reason": "STOP_LOSS",
-      "bars_held": 0,
-      "cap_after": 1013.1
-    }
+    "last_trade": null
   }
 }

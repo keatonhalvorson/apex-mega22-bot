@@ -52,13 +52,9 @@ def websocket_event_handler(event_type: str, data: dict):
     """Callback from bot to immediately push events to all connected dashboard browsers."""
     if not connected_websockets:
         return
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
     message = json.dumps({"type": event_type, "data": data})
     for ws in list(connected_websockets):
-        loop.create_task(_safe_send_ws(ws, message))
+        asyncio.create_task(_safe_send_ws(ws, message))
 
 bot.add_listener(websocket_event_handler)
 
@@ -623,15 +619,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         /* Sub-Second Live Tick Animation */
         @keyframes flashUp {
-            0% { color: #00f090; text-shadow: 0 0 8px rgba(0, 240, 144, 0.6); }
-            100% { color: inherit; text-shadow: none; }
+            0% { background-color: rgba(0, 240, 144, 0.4); color: #fff; text-shadow: 0 0 8px rgba(0, 240, 144, 0.8); }
+            100% { background-color: transparent; }
         }
         @keyframes flashDown {
-            0% { color: #ff3366; text-shadow: 0 0 8px rgba(255, 51, 102, 0.6); }
-            100% { color: inherit; text-shadow: none; }
+            0% { background-color: rgba(255, 51, 102, 0.4); color: #fff; text-shadow: 0 0 8px rgba(255, 51, 102, 0.8); }
+            100% { background-color: transparent; }
         }
-        .tick-up { animation: flashUp 0.75s ease-out; }
-        .tick-down { animation: flashDown 0.75s ease-out; }
+        .tick-up { animation: flashUp 0.65s ease-out; }
+        .tick-down { animation: flashDown 0.65s ease-out; }
 
         /* Filter Pills Strip */
         .filter-strip {
@@ -1198,7 +1194,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 <span>Sharpe</span>
             </div>
             <div class="kpi-val" id="val-net-profit">+$0.00</div>
-            <div class="kpi-sub" id="val-sharpe">معامل شارب: 0.00 | المحقق: +$0.00</div>
+            <div class="kpi-sub" id="val-sharpe">معامل شارب: 0.00 | التوقع: +$0.00</div>
         </div>
 
         <div class="kpi-card amber">
@@ -1558,9 +1554,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         let equityHistory = [];
         let hawkesHistory = [];
         let pingInterval = null;
-        let lastPingSentTime = 0;
         let lastPingSent = 0;
-        let lastPongReceived = Date.now();
         let soundEnabled = localStorage.getItem('apex_sound') !== 'false';
         let isPausedState = false;
         let heatmapFilterMode = 'all';
@@ -1664,7 +1658,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('ws-pulse').className = 'pulse-dot';
                 document.getElementById('ws-text').innerText = 'بث لحظي مباشر (Binance Spot L2)';
                 document.getElementById('badge-ws').style.borderColor = 'rgba(0, 240, 144, 0.3)';
-                lastPongReceived = Date.now();
                 if (pingInterval) clearInterval(pingInterval);
                 pingInterval = setInterval(sendPing, 3000);
                 sendPing();
@@ -1672,29 +1665,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
             ws.onmessage = (event) => {
                 try {
-                    lastPongReceived = Date.now();
                     const msg = JSON.parse(event.data);
                     if (msg.type === 'state_snapshot') {
                         renderDashboard(msg.data);
                     } else if (msg.type === 'tick') {
                         queueSubsecondTick(msg.data);
-                    } else if (msg.type === 'pong' && msg.client_t) {
-                        // Store lastPingSentTime and only update UI when matching the current ping
-                        if (msg.client_t === lastPingSentTime || !lastPingSentTime) {
-                            const now = Date.now();
-                            const rtt = Math.max(1, now - msg.client_t);
-                            // If rtt is reasonable (< 5000ms), update UI. If from old wake-up (> 5000ms), simply ignore this sample.
-                            if (rtt < 5000) {
-                                const pingEl = document.getElementById('ping-text');
-                                if (pingEl) pingEl.innerText = `${rtt} ms`;
-                                const badge = document.getElementById('badge-ping');
-                                if (badge) {
-                                    if (rtt < 150) badge.style.borderColor = 'rgba(0, 240, 144, 0.3)';
-                                    else if (rtt < 400) badge.style.borderColor = 'rgba(255, 170, 0, 0.3)';
-                                    else badge.style.borderColor = 'rgba(255, 51, 102, 0.3)';
-                                }
-                            }
-                        }
+                    } else if (msg.type === 'pong') {
+                        const now = Date.now();
+                        const rtt = now - msg.client_t;
+                        document.getElementById('ping-text').innerText = `${rtt} ms`;
                     } else if (msg.type === 'log') {
                         appendConsoleLog(msg.data);
                     } else if (msg.type === 'position_opened') {
@@ -1724,8 +1703,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 document.getElementById('ws-pulse').className = 'pulse-dot pulse-danger';
                 document.getElementById('ws-text').innerText = 'انقطع الاتصال، جاري الإعادة...';
                 document.getElementById('badge-ws').style.borderColor = 'rgba(255, 51, 102, 0.4)';
-                const pingEl = document.getElementById('ping-text');
-                if (pingEl) pingEl.innerText = '-- ms';
                 if (pingInterval) clearInterval(pingInterval);
                 setTimeout(connectWS, 2000);
             };
@@ -1733,109 +1710,12 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         function sendPing() {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                if (lastPongReceived && (Date.now() - lastPongReceived > 15000)) {
-                    // Connection is stalled or half-open; force clean reconnect
-                    console.warn('WebSocket watchdog: no pong for 15s, reconnecting...');
-                    try { ws.close(); } catch (_) {}
-                    return;
-                }
-                lastPingSentTime = Date.now();
-                lastPingSent = lastPingSentTime;
-                ws.send(JSON.stringify({action: 'ping', t: lastPingSentTime}));
+                lastPingSent = Date.now();
+                ws.send(JSON.stringify({action: 'ping', t: lastPingSent}));
             }
         }
-
-        // Instant refresh when returning from background tab or unlocking mobile screen
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible') {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    if (Date.now() - lastPingSentTime > 1000) {
-                        sendPing();
-                    }
-                } else if (!ws || ws.readyState === WebSocket.CLOSED) {
-                    connectWS();
-                }
-            }
-        });
 
         // Sub-second Live Tick Batching via requestAnimationFrame
-        function setElText(id, text) {
-            const el = document.getElementById(id);
-            if (el && el.innerText !== text) el.innerText = text;
-            return el;
-        }
-
-        function setElClass(el, cls) {
-            if (el && el.className !== cls) el.className = cls;
-        }
-
-        let lastServerTimeMs = 0;
-        let lastServerTimeReceivedAt = 0;
-
-        function parseEntryTimeMs(timeStr) {
-            if (!timeStr) return null;
-            try {
-                const cleanStr = String(timeStr).replace(/(\.\d{3})\d+/, '$1').replace(/\+00:00$/, 'Z');
-                let t = new Date(cleanStr).getTime();
-                if (!isNaN(t)) return t;
-                t = new Date(timeStr).getTime();
-                if (!isNaN(t)) return t;
-                const m = String(timeStr).match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d+))?/);
-                if (m) {
-                    const ms = m[7] ? parseInt(m[7].substring(0, 3).padEnd(3, '0'), 10) : 0;
-                    return Date.UTC(parseInt(m[1],10), parseInt(m[2],10)-1, parseInt(m[3],10), parseInt(m[4],10), parseInt(m[5],10), parseInt(m[6],10), ms);
-                }
-            } catch (e) {}
-            return null;
-        }
-
-        function calcPositionDuration(p) {
-            let bars = (p.held_bars !== undefined && p.held_bars !== null && Number(p.held_bars) > 0) ? Number(p.held_bars) : (
-                (p.bars_held !== undefined && p.bars_held !== null && Number(p.bars_held) > 0) ? Number(p.bars_held) : 0
-            );
-            let durationMin = (p.duration_min !== undefined && p.duration_min !== null && Number(p.duration_min) > 0) ? Number(p.duration_min) : (bars * 5);
-
-            if (p.entry_time) {
-                const entryMs = parseEntryTimeMs(p.entry_time);
-                if (entryMs !== null) {
-                    const nowMs = lastServerTimeMs ? (lastServerTimeMs + (Date.now() - lastServerTimeReceivedAt)) : Date.now();
-                    const diffMs = Math.max(0, nowMs - entryMs);
-                    const elapsedMins = Math.floor(diffMs / 60000);
-                    if (elapsedMins > durationMin) {
-                        durationMin = elapsedMins;
-                    }
-                    if (elapsedMins > 0) {
-                        bars = Math.max(bars, Math.floor(elapsedMins / 5));
-                    }
-                }
-            }
-            if (bars === 0 && p.i !== undefined && lastState && lastState.bar_index && lastState.bar_index > p.i) {
-                bars = lastState.bar_index - p.i;
-                if (bars > 0 && durationMin < bars * 5) {
-                    durationMin = bars * 5;
-                }
-            }
-            if (bars === 0 && durationMin > 0) {
-                bars = Math.floor(durationMin / 5);
-            }
-            if (durationMin === 0 && bars > 0) {
-                durationMin = bars * 5;
-            }
-
-            let durText = '';
-            let displayStr = '';
-            if (durationMin <= 0 && bars === 0) {
-                durText = '<1د';
-                displayStr = '0 شمعة (<1د)';
-            } else {
-                const durH = Math.floor(durationMin / 60);
-                const durM = durationMin % 60;
-                durText = durH > 0 ? `${durH}س ${durM}د` : `${durationMin}د`;
-                displayStr = `${bars} شمعة (${durText})`;
-            }
-            return { bars, durationMin, durText, displayStr };
-        }
-
         function queueSubsecondTick(tick) {
             pendingTicks[tick.sym] = tick;
             if (!isRafScheduled) {
@@ -1849,72 +1729,45 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             let lastEquity = null;
             let lastNet = null;
             let lastRoe = null;
-            let lastSharpe = null;
-            let lastRealized = null;
 
             for (const sym in pendingTicks) {
                 const tick = pendingTicks[sym];
                 tickers[sym] = tick;
 
-                if (tick.server_time_ms) {
-                    lastServerTimeMs = tick.server_time_ms;
-                    lastServerTimeReceivedAt = Date.now();
-                }
-
                 // 1. Update Heatmap Card (DOM batch)
                 const hmPrice = document.getElementById('hm-px-' + sym);
                 if (hmPrice) {
-                    const pxStr = '$' + formatPx(tick.price);
-                    if (hmPrice.innerText !== pxStr) {
-                        hmPrice.innerText = pxStr;
-                        if (tick.prev_price && tick.price > tick.prev_price) {
-                            hmPrice.classList.remove('tick-down');
-                            hmPrice.classList.add('tick-up');
-                        } else if (tick.prev_price && tick.price < tick.prev_price) {
-                            hmPrice.classList.remove('tick-up');
-                            hmPrice.classList.add('tick-down');
-                        }
-                    }
+                    hmPrice.innerText = '$' + formatPx(tick.price);
+                    hmPrice.classList.remove('tick-up', 'tick-down');
+                    if (tick.tick_dir === 'up') hmPrice.classList.add('tick-up');
+                    else if (tick.tick_dir === 'down') hmPrice.classList.add('tick-down');
                 }
                 const hmChg = document.getElementById('hm-chg-' + sym);
                 if (hmChg) {
-                    const chgStr = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
-                    const chgCls = 'hm-chg-pill ' + (tick.change_24h >= 0 ? 'pos' : 'neg');
-                    if (hmChg.innerText !== chgStr) hmChg.innerText = chgStr;
-                    setElClass(hmChg, chgCls);
+                    hmChg.innerText = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
+                    hmChg.className = 'hm-chg-pill ' + (tick.change_24h >= 0 ? 'pos' : 'neg');
                 }
                 const hmSpread = document.getElementById('hm-spread-' + sym);
                 if (hmSpread && tick.spread_bps !== undefined) {
-                    const spStr = tick.spread_bps.toFixed(1) + ' bps';
-                    if (hmSpread.innerText !== spStr) hmSpread.innerText = spStr;
+                    hmSpread.innerText = tick.spread_bps.toFixed(1) + ' bps';
                 }
 
                 // 2. Update Alpha Matrix Row Price & Spread
                 const matPrice = document.getElementById('mat-px-' + sym);
                 if (matPrice) {
-                    const pxStr = '$' + formatPx(tick.price);
-                    if (matPrice.innerText !== pxStr) {
-                        matPrice.innerText = pxStr;
-                        if (tick.prev_price && tick.price > tick.prev_price) {
-                            matPrice.classList.remove('tick-down');
-                            matPrice.classList.add('tick-up');
-                        } else if (tick.prev_price && tick.price < tick.prev_price) {
-                            matPrice.classList.remove('tick-up');
-                            matPrice.classList.add('tick-down');
-                        }
-                    }
+                    matPrice.innerText = '$' + formatPx(tick.price);
+                    matPrice.classList.remove('tick-up', 'tick-down');
+                    if (tick.tick_dir === 'up') matPrice.classList.add('tick-up');
+                    else if (tick.tick_dir === 'down') matPrice.classList.add('tick-down');
                 }
                 const matChg = document.getElementById('mat-chg-' + sym);
                 if (matChg) {
-                    const chgStr = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
-                    const chgCls = tick.change_24h >= 0 ? 'text-green' : 'text-red';
-                    if (matChg.innerText !== chgStr) matChg.innerText = chgStr;
-                    setElClass(matChg, chgCls);
+                    matChg.innerText = (tick.change_24h >= 0 ? '+' : '') + tick.change_24h.toFixed(2) + '%';
+                    matChg.className = tick.change_24h >= 0 ? 'text-green' : 'text-red';
                 }
                 const matSpread = document.getElementById('mat-spread-' + sym);
                 if (matSpread && tick.spread_bps !== undefined) {
-                    const spStr = tick.spread_bps.toFixed(1) + ' bps';
-                    if (matSpread.innerText !== spStr) matSpread.innerText = spStr;
+                    matSpread.innerText = tick.spread_bps.toFixed(1) + ' bps';
                 }
 
                 // 3. Update Active Position Card if open
@@ -1923,40 +1776,25 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 }
 
                 if (tick.equity !== undefined) lastEquity = tick.equity;
-                if (tick.total_pnl !== undefined) lastNet = tick.total_pnl;
-                else if (tick.net_profit !== undefined) lastNet = tick.net_profit;
-                if (tick.total_roe_pct !== undefined) lastRoe = tick.total_roe_pct;
-                else if (tick.roe_pct !== undefined) lastRoe = tick.roe_pct;
-                if (tick.sharpe_ratio !== undefined && tick.sharpe_ratio !== null) lastSharpe = tick.sharpe_ratio;
-                if (tick.realized_pnl !== undefined && tick.realized_pnl !== null) lastRealized = tick.realized_pnl;
+                if (tick.net_profit !== undefined) lastNet = tick.net_profit;
+                if (tick.roe_pct !== undefined) lastRoe = tick.roe_pct;
 
                 delete pendingTicks[sym];
             }
 
             // Update top KPI cards if changed
-            if (lastEquity !== null) {
-                setElText('val-equity', '$' + lastEquity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
+            if (lastEquity !== null && document.getElementById('val-equity')) {
+                document.getElementById('val-equity').innerText = '$' + lastEquity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
             }
-            if (lastNet !== null) {
+            if (lastNet !== null && document.getElementById('val-net-profit')) {
                 const netEl = document.getElementById('val-net-profit');
-                if (netEl) {
-                    const netStr = (lastNet >= 0 ? '+$' : '-$') + Math.abs(lastNet).toFixed(2);
-                    const netCls = 'kpi-val ' + (lastNet >= 0 ? 'text-green' : 'text-red');
-                    if (netEl.innerText !== netStr) netEl.innerText = netStr;
-                    setElClass(netEl, netCls);
-                }
+                netEl.innerText = (lastNet >= 0 ? '+$' : '-$') + Math.abs(lastNet).toFixed(2);
+                netEl.className = 'kpi-val ' + (lastNet >= 0 ? 'text-green' : 'text-red');
             }
-            if (lastRoe !== null) {
+            if (lastRoe !== null && document.getElementById('val-roe')) {
                 const roeEl = document.getElementById('val-roe');
-                if (roeEl) {
-                    const roeStr = `العائد الصافي: ${lastRoe >= 0 ? '+' : ''}${lastRoe.toFixed(2)}% ROE`;
-                    const roeCls = 'kpi-sub ' + (lastRoe >= 0 ? 'text-green' : 'text-red');
-                    if (roeEl.innerText !== roeStr) roeEl.innerText = roeStr;
-                    setElClass(roeEl, roeCls);
-                }
-            }
-            if (lastSharpe !== null && lastRealized !== null) {
-                setElText('val-sharpe', `معامل شارب: ${lastSharpe.toFixed(2)} | المحقق: ${lastRealized >= 0 ? '+' : ''}$${lastRealized.toFixed(2)}`);
+                roeEl.innerText = `العائد الصافي: ${lastRoe >= 0 ? '+' : ''}${lastRoe.toFixed(2)}% ROE`;
+                roeEl.className = 'kpi-sub ' + (lastRoe >= 0 ? 'text-green' : 'text-red');
             }
         }
 
@@ -1974,107 +1812,74 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             isPausedState = s.is_paused || false;
             updatePauseButtonUI();
 
-            if (s.server_time_ms) {
-                lastServerTimeMs = s.server_time_ms;
-                lastServerTimeReceivedAt = Date.now();
-            }
-
             // 1. KPI Cards
-            const eqVal = (s.equity !== undefined && s.equity !== null) ? s.equity : (s.capital || 1000.0);
-            setElText('val-equity', '$' + eqVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
-            const cashVal = (s.available_cash !== undefined && s.available_cash !== null) ? s.available_cash : 1000.0;
-            setElText('val-cash', '$' + cashVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
-            setElText('val-slots', `${s.used_slots || 0} / ${s.max_slots || 3} خانات`);
+            document.getElementById('val-equity').innerText = '$' + s.equity.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('val-cash').innerText = '$' + s.available_cash.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('val-slots').innerText = `${s.used_slots} / ${s.max_slots} خانات`;
             
-            const netVal = s.total_pnl !== undefined ? s.total_pnl : (s.net_profit !== undefined ? s.net_profit : 0.0);
             const netEl = document.getElementById('val-net-profit');
-            if (netEl) {
-                const netStr = (netVal >= 0 ? '+$' : '-$') + Math.abs(netVal).toFixed(2);
-                const netCls = 'kpi-val ' + (netVal >= 0 ? 'text-green' : 'text-red');
-                if (netEl.innerText !== netStr) netEl.innerText = netStr;
-                setElClass(netEl, netCls);
-            }
+            netEl.innerText = (s.net_profit >= 0 ? '+$' : '-$') + Math.abs(s.net_profit).toFixed(2);
+            netEl.className = 'kpi-val ' + (s.net_profit >= 0 ? 'text-green' : 'text-red');
 
-            const roeVal = s.total_roe_pct !== undefined ? s.total_roe_pct : (s.roe_pct !== undefined ? s.roe_pct : 0.0);
             const roeEl = document.getElementById('val-roe');
-            if (roeEl) {
-                const roeStr = `العائد الصافي: ${roeVal >= 0 ? '+' : ''}${roeVal.toFixed(2)}% ROE`;
-                const roeCls = 'kpi-sub ' + (roeVal >= 0 ? 'text-green' : 'text-red');
-                if (roeEl.innerText !== roeStr) roeEl.innerText = roeStr;
-                setElClass(roeEl, roeCls);
-            }
+            roeEl.innerText = `العائد الصافي: ${s.roe_pct >= 0 ? '+' : ''}${s.roe_pct.toFixed(2)}% ROE`;
+            roeEl.className = 'kpi-sub ' + (s.roe_pct >= 0 ? 'text-green' : 'text-red');
 
-            const sharpeVal = (s.sharpe_ratio !== undefined && s.sharpe_ratio !== null) ? s.sharpe_ratio : ((s.stats && s.stats.sharpe_ratio !== undefined) ? s.stats.sharpe_ratio : 0.0);
-            const realizedVal = (s.realized_pnl !== undefined && s.realized_pnl !== null) ? s.realized_pnl : ((s.stats && s.stats.net_profit !== undefined) ? s.stats.net_profit : 0.0);
-            setElText('val-sharpe', `معامل شارب: ${sharpeVal.toFixed(2)} | المحقق: ${realizedVal >= 0 ? '+' : ''}$${realizedVal.toFixed(2)}`);
+            const sharpeVal = s.sharpe_ratio || (s.stats ? s.stats.sharpe_ratio : 0.0) || 0.0;
+            const expVal = s.avg_trade_net || (s.stats ? s.stats.avg_trade_net : 0.0) || 0.0;
+            document.getElementById('val-sharpe').innerText = `معامل شارب: ${sharpeVal.toFixed(2)} | التوقع: ${expVal >= 0 ? '+' : ''}$${expVal.toFixed(2)}`;
 
-            setElText('val-win-rate', (s.win_rate !== undefined ? s.win_rate.toFixed(1) : '0.0') + '%');
-            setElText('val-pf', `معامل الربح: ${(s.profit_factor !== undefined ? s.profit_factor.toFixed(2) : '0.00')} | ${s.winning_trades || 0} رابحة / ${s.losing_trades || 0} خاسرة`);
+            document.getElementById('val-win-rate').innerText = s.win_rate.toFixed(1) + '%';
+            document.getElementById('val-pf').innerText = `معامل الربح: ${s.profit_factor.toFixed(2)} | ${s.winning_trades} رابحة / ${s.losing_trades} خاسرة`;
 
-            setElText('val-max-dd', ((s.max_drawdown_pct || 0)).toFixed(1) + '%');
+            document.getElementById('val-max-dd').innerText = (s.max_drawdown_pct || 0).toFixed(1) + '%';
             const avgMins = s.avg_trade_duration_min || (s.stats ? s.stats.avg_trade_duration_min : 0) || 0;
-            setElText('val-duration', `متوسط المدة: ${avgMins} دقيقة | ${s.total_trades || 0} صفقات`);
+            document.getElementById('val-duration').innerText = `متوسط المدة: ${avgMins} دقيقة | ${s.total_trades} صفقات`;
 
-            if (s.btc_price !== undefined) {
-                setElText('val-btc-price', '$' + s.btc_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}));
-            }
-            if (s.btc_hawkes !== undefined) {
-                setElText('val-btc-sub', `هوكس: ${s.btc_hawkes.toFixed(4)} | 24h: ${s.btc_24h > 0 ? '+' : ''}${(s.btc_24h || 0).toFixed(1)}%`);
-            }
+            document.getElementById('val-btc-price').innerText = '$' + s.btc_price.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            document.getElementById('val-btc-sub').innerText = `هوكس: ${s.btc_hawkes.toFixed(4)} | 24h: ${s.btc_24h > 0 ? '+' : ''}${s.btc_24h.toFixed(1)}%`;
             
             const btcBadge = document.getElementById('btc-gate-badge');
-            if (btcBadge) {
-                const btcText = s.is_btc_safe ? 'آمن 🟢' : 'درع هوكس نشط 🛑';
-                const btcCls = s.is_btc_safe ? 'text-green' : 'text-red';
-                if (btcBadge.innerText !== btcText) btcBadge.innerText = btcText;
-                setElClass(btcBadge, btcCls);
+            if (s.is_btc_safe) {
+                btcBadge.innerText = 'آمن 🟢';
+                btcBadge.className = 'text-green';
+            } else {
+                btcBadge.innerText = 'درع هوكس نشط 🛑';
+                btcBadge.className = 'text-red';
             }
 
             // Hawkes Badges
             const hBadgeText = document.getElementById('hawkes-text');
-            if (hBadgeText && s.btc_hawkes !== undefined) {
-                const hText = `هوكس: ${s.btc_hawkes.toFixed(4)} (${s.is_btc_safe ? 'آمن' : 'صدمة!'})`;
-                if (hBadgeText.innerText !== hText) hBadgeText.innerText = hText;
-            }
-            const badgeH = document.getElementById('badge-hawkes');
-            if (badgeH) {
-                const borderColor = s.is_btc_safe ? 'rgba(0, 240, 144, 0.3)' : 'rgba(255, 51, 102, 0.4)';
-                if (badgeH.style.borderColor !== borderColor) badgeH.style.borderColor = borderColor;
-            }
+            hBadgeText.innerText = `هوكس: ${s.btc_hawkes.toFixed(4)} (${s.is_btc_safe ? 'آمن' : 'صدمة!'})`;
+            document.getElementById('badge-hawkes').style.borderColor = s.is_btc_safe ? 'rgba(0, 240, 144, 0.3)' : 'rgba(255, 51, 102, 0.4)';
 
             // Mini monitor in Tab 1
             const miniHVal = document.getElementById('mini-hawkes-val');
-            if (miniHVal && s.btc_hawkes !== undefined) {
-                const valStr = s.btc_hawkes.toFixed(4);
-                const valCls = s.is_btc_safe ? 'text-green' : 'text-red';
-                if (miniHVal.innerText !== valStr) miniHVal.innerText = valStr;
-                setElClass(miniHVal, valCls);
+            if (miniHVal) {
+                miniHVal.innerText = s.btc_hawkes.toFixed(4);
+                miniHVal.className = s.is_btc_safe ? 'text-green' : 'text-red';
             }
             const miniHGate = document.getElementById('mini-hawkes-gate');
             if (miniHGate) {
-                const gateText = s.is_btc_safe ? 'مفتوحة (النطاق آمن) 🟢' : 'مغلقة (درع الصدمات مفعل) 🛑';
-                const gateCls = s.is_btc_safe ? 'text-green' : 'text-red';
-                if (miniHGate.innerText !== gateText) miniHGate.innerText = gateText;
-                setElClass(miniHGate, gateCls);
+                miniHGate.innerText = s.is_btc_safe ? 'مفتوحة (النطاق آمن) 🟢' : 'مغلقة (درع الصدمات مفعل) 🛑';
+                miniHGate.className = s.is_btc_safe ? 'text-green' : 'text-red';
             }
             const miniTrend = document.getElementById('mini-btc-trend');
             if (miniTrend) {
-                const trendStr = `${(s.btc_24h || 0) > 0 ? '+' : ''}${(s.btc_24h || 0).toFixed(1)}% / ${(s.btc_4h || 0) > 0 ? '+' : ''}${(s.btc_4h || 0).toFixed(1)}%`;
-                if (miniTrend.innerText !== trendStr) miniTrend.innerText = trendStr;
+                miniTrend.innerText = `${s.btc_24h > 0 ? '+' : ''}${s.btc_24h.toFixed(1)}% / ${s.btc_4h > 0 ? '+' : ''}${s.btc_4h.toFixed(1)}%`;
             }
 
             // Bot Mode Badge
             const botModeTxt = document.getElementById('bot-mode-text');
             const botModeIcon = document.getElementById('bot-mode-icon');
-            const badgeMode = document.getElementById('badge-bot-mode');
             if (s.is_paused) {
-                if (botModeTxt && botModeTxt.innerText !== 'متوقف مؤقتاً (PAUSED)') botModeTxt.innerText = 'متوقف مؤقتاً (PAUSED)';
-                if (botModeIcon && botModeIcon.innerText !== '⏸️') botModeIcon.innerText = '⏸️';
-                if (badgeMode) badgeMode.style.borderColor = 'rgba(251, 191, 36, 0.4)';
+                botModeTxt.innerText = 'متوقف مؤقتاً (PAUSED)';
+                botModeIcon.innerText = '⏸️';
+                document.getElementById('badge-bot-mode').style.borderColor = 'rgba(251, 191, 36, 0.4)';
             } else {
-                if (botModeTxt && botModeTxt.innerText !== 'نشط (ACTIVE)') botModeTxt.innerText = 'نشط (ACTIVE)';
-                if (botModeIcon && botModeIcon.innerText !== '🟢') botModeIcon.innerText = '🟢';
-                if (badgeMode) badgeMode.style.borderColor = 'rgba(0, 240, 144, 0.3)';
+                botModeTxt.innerText = 'نشط (ACTIVE)';
+                botModeIcon.innerText = '🟢';
+                document.getElementById('badge-bot-mode').style.borderColor = 'rgba(0, 240, 144, 0.3)';
             }
 
             // 2. Render Heatmap (Tab 1)
@@ -2094,12 +1899,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             if (s.btc_hawkes_history) {
                 hawkesHistory = s.btc_hawkes_history;
             }
-            const hawkesTab = document.getElementById('tab-hawkes');
-            if (hawkesTab && hawkesTab.classList.contains('active')) {
-                drawHawkesGauge(s.btc_hawkes);
-                drawHawkesTrajectory();
-                renderHawkesSensitivityTable(s.leaderboard);
-            }
+            drawHawkesGauge(s.btc_hawkes);
+            drawHawkesTrajectory();
+            renderHawkesSensitivityTable(s.leaderboard);
 
             // 7. Render Alpha Matrix (Tab 5)
             renderAlphaMatrixTable(s.leaderboard);
@@ -2114,63 +1916,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
             if (el) el.classList.add('active');
             if (lastState) renderHeatmap(lastState.leaderboard);
-        }
-
-        function renderHeatmapCardHtml(item) {
-            const isPos = item.change_24h >= 0;
-            const chgSign = isPos ? '+' : '';
-            const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
-            const grpLabel = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
-            const volM = ((item.vol_quote || 0) / 1000000.0).toFixed(1);
-            const statusLabel = item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status);
-
-            return `
-            <div class="heatmap-card" id="hm-card-${item.sym}" onclick="selectMatrixCoin('${item.sym}')">
-                <div class="hm-sym">
-                    <span>${item.sym.replace('USDT', '')}</span>
-                    <div style="display:flex;gap:4px;align-items:center;">
-                        <span class="badge-grp ${grpClass}">${grpLabel}</span>
-                        <span class="hm-chg-pill ${isPos ? 'pos' : 'neg'}" id="hm-chg-${item.sym}">${chgSign}${(item.change_24h || 0).toFixed(2)}%</span>
-                    </div>
-                </div>
-                <div class="hm-price" id="hm-px-${item.sym}">$${formatPx(item.price)}</div>
-                <div class="hm-l2-depth">
-                    <span>فارق: <b id="hm-spread-${item.sym}">${(item.spread_bps || 0).toFixed(1)} bps</b></span>
-                    <span>حجم: $${volM}M</span>
-                </div>
-                <div class="hm-meta" id="hm-meta-${item.sym}">
-                    <span>Alpha: <b>${item.score.toFixed(1)}</b></span>
-                    <span class="badge-status ${item.status}">${statusLabel}</span>
-                </div>
-            </div>`;
-        }
-
-        function updateHeatmapCard(item) {
-            const isPos = item.change_24h >= 0;
-            const chgSign = isPos ? '+' : '';
-            const pxEl = document.getElementById('hm-px-' + item.sym);
-            if (pxEl) {
-                const pxStr = '$' + formatPx(item.price);
-                if (pxEl.innerText !== pxStr) pxEl.innerText = pxStr;
-            }
-            const chgEl = document.getElementById('hm-chg-' + item.sym);
-            if (chgEl) {
-                const chgStr = `${chgSign}${(item.change_24h || 0).toFixed(2)}%`;
-                const chgCls = 'hm-chg-pill ' + (isPos ? 'pos' : 'neg');
-                if (chgEl.innerText !== chgStr) chgEl.innerText = chgStr;
-                setElClass(chgEl, chgCls);
-            }
-            const spreadEl = document.getElementById('hm-spread-' + item.sym);
-            if (spreadEl && item.spread_bps !== undefined) {
-                const spStr = (item.spread_bps || 0).toFixed(1) + ' bps';
-                if (spreadEl.innerText !== spStr) spreadEl.innerText = spStr;
-            }
-            const metaEl = document.getElementById('hm-meta-' + item.sym);
-            if (metaEl) {
-                const statusLabel = item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status);
-                const metaHtml = `<span>Alpha: <b>${item.score.toFixed(1)}</b></span><span class="badge-status ${item.status}">${statusLabel}</span>`;
-                if (metaEl.innerHTML !== metaHtml) metaEl.innerHTML = metaHtml;
-            }
         }
 
         function renderHeatmap(leaderboard) {
@@ -2188,27 +1933,33 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 filtered = filtered.filter(x => x.is_candidate === 1 || x.status === 'TRIGGERED');
             }
 
-            const activeSyms = new Set(filtered.map(x => x.sym));
-            // Remove cards no longer in filter
-            Array.from(container.children).forEach(child => {
-                const sym = child.id.replace('hm-card-', '');
-                if (!activeSyms.has(sym)) child.remove();
-            });
+            container.innerHTML = filtered.map(item => {
+                const isPos = item.change_24h >= 0;
+                const chgSign = isPos ? '+' : '';
+                const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+                const grpLabel = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+                const volM = ((item.vol_quote || 0) / 1000000.0).toFixed(1);
 
-            // Update in place and maintain DOM order without destruction
-            filtered.forEach(item => {
-                let card = document.getElementById('hm-card-' + item.sym);
-                if (!card) {
-                    const temp = document.createElement('div');
-                    temp.innerHTML = renderHeatmapCardHtml(item).trim();
-                    if (temp.firstElementChild) {
-                        container.appendChild(temp.firstElementChild);
-                    }
-                } else {
-                    updateHeatmapCard(item);
-                    container.appendChild(card); // Reorder existing DOM element smoothly
-                }
-            });
+                return `
+                <div class="heatmap-card" id="hm-card-${item.sym}" onclick="selectMatrixCoin('${item.sym}')">
+                    <div class="hm-sym">
+                        <span>${item.sym.replace('USDT', '')}</span>
+                        <div style="display:flex;gap:4px;align-items:center;">
+                            <span class="badge-grp ${grpClass}">${grpLabel}</span>
+                            <span class="hm-chg-pill ${isPos ? 'pos' : 'neg'}" id="hm-chg-${item.sym}">${chgSign}${(item.change_24h || 0).toFixed(2)}%</span>
+                        </div>
+                    </div>
+                    <div class="hm-price" id="hm-px-${item.sym}">$${formatPx(item.price)}</div>
+                    <div class="hm-l2-depth">
+                        <span>فارق: <b id="hm-spread-${item.sym}">${(item.spread_bps || 0).toFixed(1)} bps</b></span>
+                        <span>حجم: $${volM}M</span>
+                    </div>
+                    <div class="hm-meta">
+                        <span>Alpha: <b>${item.score.toFixed(1)}</b></span>
+                        <span class="badge-status ${item.status}">${item.status === 'POSITION_OPEN' ? '🟢 صفقة' : (item.status === 'TRIGGERED' ? '🚀 انفجار' : item.status)}</span>
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         // Top 3 Opportunities Radar
@@ -2217,25 +1968,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             if (!list) return;
             const cands = (leaderboard || []).filter(x => x.status !== 'POSITION_OPEN').slice(0, 3);
             if (cands.length === 0) {
-                const emptyHtml = '<div style="color:var(--text-muted);font-size:0.75rem;text-align:center;padding:10px;">المحرك يفحص الـ 22 عملة...</div>';
-                if (list.innerHTML !== emptyHtml) list.innerHTML = emptyHtml;
+                list.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;text-align:center;padding:10px;">المحرك يفحص الـ 22 عملة...</div>';
                 return;
             }
-            if (list.querySelector('.radar-item') === null) {
-                list.innerHTML = '';
-            }
-            cands.forEach((c, i) => {
-                let item = document.getElementById('radar-item-' + i);
-                if (!item) {
-                    item = document.createElement('div');
-                    item.id = 'radar-item-' + i;
-                    item.className = 'radar-item';
-                    item.style.cursor = 'pointer';
-                    list.appendChild(item);
-                }
-                item.onclick = () => selectMatrixCoin(c.sym);
-                const scoreColor = c.score > 20 ? 'var(--accent-green)' : 'var(--accent-cyan)';
-                const newHtml = `
+            list.innerHTML = cands.map((c, i) => `
+                <div class="radar-item" onclick="selectMatrixCoin('${c.sym}')" style="cursor: pointer;">
                     <div style="display:flex;align-items:center;gap:8px;">
                         <span style="font-weight:800;color:var(--accent-cyan);">#${i+1}</span>
                         <span style="font-weight:800;color:#fff;">${c.sym}</span>
@@ -2243,192 +1980,110 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     </div>
                     <div style="display:flex;gap:12px;align-items:center;">
                         <span style="color:var(--text-muted);">$${formatPx(c.price)}</span>
-                        <span style="font-weight:800;color:${scoreColor};">Alpha: ${c.score.toFixed(1)}</span>
+                        <span style="font-weight:800;color:${c.score > 20 ? 'var(--accent-green)' : 'var(--accent-cyan)'};">Alpha: ${c.score.toFixed(1)}</span>
                     </div>
-                `;
-                if (item.innerHTML !== newHtml) item.innerHTML = newHtml;
-            });
-            while (list.children.length > cands.length) {
-                list.lastElementChild.remove();
-            }
+                </div>
+            `).join('');
         }
 
         // Active Positions Card Matrix (Tab 2)
-        function renderPositionCardHtml(p) {
-            const isPos = (p.unrealized_pnl || 0) >= 0;
-            const pnlColor = isPos ? 'text-green' : 'text-red';
-            const pnlSign = isPos ? '+' : '';
-            const stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
-            const dur = calcPositionDuration(p);
-
-            // Progress -2.2% SL to +6.5% TP
-            const pnlProgress = Math.max(0, Math.min(100, (((p.unrealized_pnl_pct || 0) + 2.2) / 8.7) * 100));
-            const fillLeft = (p.unrealized_pnl_pct || 0) >= 0 ? '25.3%' : `${pnlProgress}%`;
-            const fillWidth = (p.unrealized_pnl_pct || 0) >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
-            const barClass = (p.unrealized_pnl_pct || 0) >= 0 ? 'green' : 'red';
-
-            return `
-            <div class="pos-card-hero" id="pos-card-${p.sym}">
-                <div class="pos-head">
-                    <div class="pos-sym-title">
-                        <span>${p.sym}</span>
-                        <span class="badge-status POSITION_OPEN">SPOT 1X CASH</span>
-                        <span id="pos-trail-badge-${p.sym}">${p.trailing_active ? '<span class="badge-status TRIGGERED">حاصد القمم 🏹</span>' : ''}</span>
-                    </div>
-                    <div class="pos-pnl-headline">
-                        <div class="pos-pnl-usd ${pnlColor}" id="pos-pnl-val-${p.sym}">${pnlSign}$${(p.unrealized_pnl || 0).toFixed(2)}</div>
-                        <div class="pos-pnl-pct ${pnlColor}" id="pos-pnl-pct-${p.sym}">${pnlSign}${(p.unrealized_pnl_pct || 0).toFixed(2)}%</div>
-                    </div>
-                </div>
-
-                <div class="pos-details-grid">
-                    <div>سعر الدخول: <b>$${formatPx(p.px)}</b></div>
-                    <div>السعر المباشر: <b id="pos-curr-px-${p.sym}">$${formatPx(p.current_px)}</b></div>
-                    <div>حجم المركز: <b>$${(p.notional || 0).toFixed(2)}</b></div>
-                    <div>أعلى سعر وصله: <b id="pos-high-${p.sym}">$${formatPx(p.highest_seen || p.current_px)}</b></div>
-                    <div>الحماية: <b id="pos-stop-${p.sym}" style="color:${p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${stopText}</b></div>
-                    <div>المدة الحالية: <b id="pos-dur-${p.sym}">${dur.displayStr}</b></div>
-                </div>
-
-                <div class="pos-progress-wrap">
-                    <div class="pos-progress-labels">
-                        <span style="color:var(--accent-red);">-2.2% SL</span>
-                        <span style="color:#94a3b8;">0.0% تعادل</span>
-                        <span style="color:var(--accent-green);">+6.5% TP</span>
-                    </div>
-                    <div class="pos-progress-track">
-                        <div class="pos-zero-line"></div>
-                        <div class="pos-progress-fill ${barClass}" id="pos-prog-fill-${p.sym}" style="left:${fillLeft}; width:${fillWidth};"></div>
-                    </div>
-                </div>
-
-                <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; margin-top:4px;">
-                    <span style="font-size:0.7rem; color:var(--text-sub);">توقيت الدخول: ${(p.entry_time || '').substring(11, 19)} UTC</span>
-                    <button class="btn-action btn-emergency" onclick="closePosition('${p.sym}')">إغلاق يدوي للمركز</button>
-                </div>
-            </div>`;
-        }
-
-        function updatePositionCard(p) {
-            if (!p || !p.sym) return false;
-            const card = document.getElementById('pos-card-' + p.sym);
-            if (!card) return false;
-
-            const isPos = (p.unrealized_pnl || 0) >= 0;
-            const sign = isPos ? '+' : '';
-            const col = isPos ? 'text-green' : 'text-red';
-
-            const pnlVal = document.getElementById('pos-pnl-val-' + p.sym);
-            if (pnlVal) {
-                const valStr = `${sign}$${(p.unrealized_pnl || 0).toFixed(2)}`;
-                const valCls = 'pos-pnl-usd ' + col;
-                if (pnlVal.innerText !== valStr) pnlVal.innerText = valStr;
-                setElClass(pnlVal, valCls);
-            }
-
-            const pnlPct = document.getElementById('pos-pnl-pct-' + p.sym);
-            if (pnlPct) {
-                const pctStr = `${sign}${(p.unrealized_pnl_pct || 0).toFixed(2)}%`;
-                const pctCls = 'pos-pnl-pct ' + col;
-                if (pnlPct.innerText !== pctStr) pnlPct.innerText = pctStr;
-                setElClass(pnlPct, pctCls);
-            }
-
-            const currPx = document.getElementById('pos-curr-px-' + p.sym);
-            if (currPx) {
-                const pxStr = '$' + formatPx(p.current_px);
-                if (currPx.innerText !== pxStr) currPx.innerText = pxStr;
-            }
-
-            const highEl = document.getElementById('pos-high-' + p.sym);
-            if (highEl && p.highest_seen !== undefined) {
-                const highStr = '$' + formatPx(p.highest_seen);
-                if (highEl.innerText !== highStr) highEl.innerText = highStr;
-            }
-
-            const stopEl = document.getElementById('pos-stop-' + p.sym);
-            if (stopEl && p.stop !== undefined) {
-                const stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
-                const stopColor = p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-                if (stopEl.innerText !== stopText) stopEl.innerText = stopText;
-                if (stopEl.style.color !== stopColor) stopEl.style.color = stopColor;
-            }
-
-            const trailBadge = document.getElementById('pos-trail-badge-' + p.sym);
-            if (trailBadge) {
-                const badgeHtml = p.trailing_active ? '<span class="badge-status TRIGGERED">حاصد القمم 🏹</span>' : '';
-                if (trailBadge.innerHTML !== badgeHtml) trailBadge.innerHTML = badgeHtml;
-            }
-
-            const durEl = document.getElementById('pos-dur-' + p.sym);
-            if (durEl) {
-                const dur = calcPositionDuration(p);
-                if (durEl.innerText !== dur.displayStr) durEl.innerText = dur.displayStr;
-            }
-
-            const fill = document.getElementById('pos-prog-fill-' + p.sym);
-            if (fill) {
-                const pnlProgress = Math.max(0, Math.min(100, (((p.unrealized_pnl_pct || 0) + 2.2) / 8.7) * 100));
-                const fillLeft = (p.unrealized_pnl_pct || 0) >= 0 ? '25.3%' : `${pnlProgress}%`;
-                const fillWidth = (p.unrealized_pnl_pct || 0) >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
-                const fillCls = 'pos-progress-fill ' + (isPos ? 'green' : 'red');
-                if (fill.style.left !== fillLeft) fill.style.left = fillLeft;
-                if (fill.style.width !== fillWidth) fill.style.width = fillWidth;
-                setElClass(fill, fillCls);
-            }
-            return true;
-        }
-
         function renderActivePositions(positions) {
             const container = document.getElementById('positions-matrix-container');
             const badgeCount = document.getElementById('pos-matrix-count');
-            const posList = positions || [];
-            if (badgeCount) {
-                const badgeText = `${posList.length} / 3 خانات مستخدمة`;
-                if (badgeCount.innerText !== badgeText) badgeCount.innerText = badgeText;
-            }
-            if (!container) return;
+            badgeCount.innerText = `${positions.length} / 3 خانات مستخدمة`;
 
-            if (posList.length === 0) {
-                if (!container.querySelector('.pos-empty-placeholder')) {
-                    container.innerHTML = `
-                    <div class="pos-empty-placeholder" style="grid-column: 1/-1; text-align: center; padding: 40px 20px; color: var(--text-muted); border: 1px dashed rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.01);">
-                        <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
-                        <div style="font-size: 0.95rem; font-weight: 700; color: #fff;">لا توجد صفقات مفتوحة حالياً</div>
-                        <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">المحرك يفحص الـ 22 عملة بانتظار استيفاء شروط وايكوف وفيشر مع التحقق من درع هوكس.</div>
-                    </div>`;
-                }
+            if (positions.length === 0) {
+                container.innerHTML = `
+                <div style="grid-column: 1/-1; text-align: center; padding: 40px 20px; color: var(--text-muted); border: 1px dashed rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.01);">
+                    <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
+                    <div style="font-size: 0.95rem; font-weight: 700; color: #fff;">لا توجد صفقات مفتوحة حالياً</div>
+                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">المحرك يفحص الـ 22 عملة بانتظار استيفاء شروط وايكوف وفيشر مع التحقق من درع هوكس.</div>
+                </div>`;
                 return;
             }
 
-            // Remove empty placeholder if transitioning from 0 to >0 positions
-            const emptyEl = container.querySelector('.pos-empty-placeholder');
-            if (emptyEl) emptyEl.remove();
+            container.innerHTML = positions.map(p => {
+                const pnlColor = p.unrealized_pnl >= 0 ? 'text-green' : 'text-red';
+                const pnlSign = p.unrealized_pnl >= 0 ? '+' : '';
+                let stopText = p.stop > 0 ? `وقف خسارة: -${(p.stop * 100).toFixed(1)}%` : `ربح مقفول: +${(Math.abs(p.stop) * 100).toFixed(1)}% 🔒`;
 
-            const activeSyms = new Set(posList.map(p => p.sym));
-            // Remove cards for closed positions
-            container.querySelectorAll('.pos-card-hero').forEach(card => {
-                const cardSym = card.id.replace('pos-card-', '');
-                if (!activeSyms.has(cardSym)) card.remove();
-            });
+                // Progress -2.2% SL to +6.5% TP
+                const pnlProgress = Math.max(0, Math.min(100, ((p.unrealized_pnl_pct + 2.2) / 8.7) * 100));
+                const fillLeft = p.unrealized_pnl_pct >= 0 ? '25.3%' : `${pnlProgress}%`;
+                const fillWidth = p.unrealized_pnl_pct >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
+                const barClass = p.unrealized_pnl_pct >= 0 ? 'green' : 'red';
 
-            // Update existing cards in place without DOM recreation, or append new cards
-            posList.forEach(p => {
-                const existing = document.getElementById('pos-card-' + p.sym);
-                if (existing) {
-                    updatePositionCard(p);
-                } else {
-                    const temp = document.createElement('div');
-                    temp.innerHTML = renderPositionCardHtml(p).trim();
-                    if (temp.firstElementChild) {
-                        container.appendChild(temp.firstElementChild);
-                    }
-                }
-            });
+                return `
+                <div class="pos-card-hero" id="pos-card-${p.sym}">
+                    <div class="pos-head">
+                        <div class="pos-sym-title">
+                            <span>${p.sym}</span>
+                            <span class="badge-status POSITION_OPEN">SPOT 1X CASH</span>
+                            ${p.trailing_active ? '<span class="badge-status TRIGGERED">حاصد القمم 🏹</span>' : ''}
+                        </div>
+                        <div class="pos-pnl-headline">
+                            <div class="pos-pnl-usd ${pnlColor}" id="pos-pnl-val-${p.sym}">${pnlSign}$${p.unrealized_pnl.toFixed(2)}</div>
+                            <div class="pos-pnl-pct ${pnlColor}" id="pos-pnl-pct-${p.sym}">${pnlSign}${p.unrealized_pnl_pct.toFixed(2)}%</div>
+                        </div>
+                    </div>
+
+                    <div class="pos-details-grid">
+                        <div>سعر الدخول: <b>$${formatPx(p.px)}</b></div>
+                        <div>السعر المباشر: <b id="pos-curr-px-${p.sym}">$${formatPx(p.current_px)}</b></div>
+                        <div>حجم المركز: <b>$${p.notional.toFixed(2)}</b></div>
+                        <div>أعلى سعر وصله: <b>$${formatPx(p.highest_seen)}</b></div>
+                        <div>الحماية: <b style="color:${p.stop < 0 ? 'var(--accent-green)' : 'var(--accent-red)'};">${stopText}</b></div>
+                        <div>المدة الحالية: <b>${p.held_bars || 0} شمعة (${(p.held_bars || 0)*5} د)</b></div>
+                    </div>
+
+                    <div class="pos-progress-wrap">
+                        <div class="pos-progress-labels">
+                            <span style="color:var(--accent-red);">-2.2% SL</span>
+                            <span style="color:#94a3b8;">0.0% تعادل</span>
+                            <span style="color:var(--accent-green);">+6.5% TP</span>
+                        </div>
+                        <div class="pos-progress-track">
+                            <div class="pos-zero-line"></div>
+                            <div class="pos-progress-fill ${barClass}" id="pos-prog-fill-${p.sym}" style="left:${fillLeft}; width:${fillWidth};"></div>
+                        </div>
+                    </div>
+
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:8px; margin-top:4px;">
+                        <span style="font-size:0.7rem; color:var(--text-sub);">توقيت الدخول: ${(p.entry_time || '').substring(11, 19)} UTC</span>
+                        <button class="btn-action btn-emergency" onclick="closePosition('${p.sym}')">إغلاق يدوي للمركز</button>
+                    </div>
+                </div>`;
+            }).join('');
         }
 
         function updatePositionCardLive(p) {
-            updatePositionCard(p);
+            const pnlVal = document.getElementById('pos-pnl-val-' + p.sym);
+            const pnlPct = document.getElementById('pos-pnl-pct-' + p.sym);
+            const currPx = document.getElementById('pos-curr-px-' + p.sym);
+            const fill = document.getElementById('pos-prog-fill-' + p.sym);
+
+            if (pnlVal && pnlPct && currPx) {
+                const isPos = p.unrealized_pnl >= 0;
+                const sign = isPos ? '+' : '';
+                const col = isPos ? 'text-green' : 'text-red';
+                
+                pnlVal.innerText = `${sign}$${p.unrealized_pnl.toFixed(2)}`;
+                pnlVal.className = 'pos-pnl-usd ' + col;
+
+                pnlPct.innerText = `${sign}${p.unrealized_pnl_pct.toFixed(2)}%`;
+                pnlPct.className = 'pos-pnl-pct ' + col;
+
+                currPx.innerText = '$' + formatPx(p.current_px);
+
+                if (fill) {
+                    const pnlProgress = Math.max(0, Math.min(100, ((p.unrealized_pnl_pct + 2.2) / 8.7) * 100));
+                    const fillLeft = p.unrealized_pnl_pct >= 0 ? '25.3%' : `${pnlProgress}%`;
+                    const fillWidth = p.unrealized_pnl_pct >= 0 ? `${pnlProgress - 25.3}%` : `${25.3 - pnlProgress}%`;
+                    fill.style.left = fillLeft;
+                    fill.style.width = fillWidth;
+                    fill.className = 'pos-progress-fill ' + (isPos ? 'green' : 'red');
+                }
+            }
         }
 
         // Equity Curve Drawing (Tab 3)
@@ -2453,10 +2108,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 const lastIdx = equityHistory.length - 1;
                 equityHistory[lastIdx] = {t: new Date().toLocaleTimeString('en-GB'), equity: s.equity};
             }
-            const tab = document.getElementById('tab-analytics');
-            if (tab && tab.classList.contains('active')) {
-                drawEquityChart();
-            }
+            drawEquityChart();
         }
 
         function drawEquityChart() {
@@ -2559,9 +2211,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.getElementById('m-rec').innerText = (stats.recovery_factor || 0.0).toFixed(2);
             document.getElementById('m-gross-win').innerText = '+$' + (stats.gross_profit || 0.0).toFixed(2);
             document.getElementById('m-gross-loss').innerText = '-$' + Math.abs(stats.gross_loss || 0.0).toFixed(2);
-            const expUsd = stats.expectancy_usd || 0.0;
-            const expPct = stats.expectancy_pct || 0.0;
-            document.getElementById('m-exp').innerText = `${expUsd >= 0 ? '+' : '-'}$${Math.abs(expUsd).toFixed(2)} (${expPct >= 0 ? '+' : ''}${expPct.toFixed(2)}%)`;
+            document.getElementById('m-payoff').innerText = (stats.payoff_ratio || 0.0).toFixed(2);
+            document.getElementById('m-exp').innerText = `+$${(stats.expectancy_usd || 0.0).toFixed(2)} (${(stats.expectancy_pct || 0.0).toFixed(2)}%)`;
             document.getElementById('m-dd').innerText = (stats.max_drawdown_pct || 0.0).toFixed(2) + '%';
             document.getElementById('m-duration').innerText = `${stats.avg_trade_duration_bars || 0} شمعة (${stats.avg_trade_duration_min || 0} دقيقة)`;
             document.getElementById('m-streaks').innerText = `${stats.max_consecutive_wins || 0}W متتالية / ${stats.max_consecutive_losses || 0}L متتالية`;
@@ -2805,8 +2456,6 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         // Cross-Sectional Shock Sensitivity Table
         function renderHawkesSensitivityTable(leaderboard) {
-            const tab = document.getElementById('tab-hawkes');
-            if (!tab || !tab.classList.contains('active')) return;
             const tbody = document.getElementById('hawkes-matrix-tbody');
             if (!tbody) return;
             const items = leaderboard || [];
@@ -2835,10 +2484,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         let matrixData = [];
         function renderAlphaMatrixTable(leaderboard) {
             matrixData = leaderboard || [];
-            const tab = document.getElementById('tab-matrix');
-            if (tab && tab.classList.contains('active')) {
-                applyMatrixFilterAndSort();
-            }
+            applyMatrixFilterAndSort();
         }
 
         function applyMatrixFilterAndSort() {
@@ -2894,16 +2540,9 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 
         // TAB 6: Trade Ledger Table
         let ledgerData = [];
-        let lastLedgerHash = '';
         function renderTradeLedger(trades) {
             ledgerData = trades || [];
-            const tab = document.getElementById('tab-ledger');
-            if (!tab || !tab.classList.contains('active')) return;
-            const currentHash = trades.length + ':' + (trades.length > 0 ? (trades[trades.length-1].exit_time || '') : '');
-            if (currentHash !== lastLedgerHash) {
-                lastLedgerHash = currentHash;
-                applyLedgerFilter();
-            }
+            applyLedgerFilter();
         }
 
         function applyLedgerFilter() {
@@ -2951,7 +2590,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     <td class="${col}" style="font-weight:800;">${sign}$${t.net.toFixed(2)}</td>
                     <td>${reasonAr}</td>
                     <td>${t.bars_held} (${t.bars_held * 5} د)</td>
-                    <td>$${(t.cap_after !== undefined && t.cap_after !== null ? t.cap_after : 1000).toFixed(2)}</td>
+                    <td>$${(t.cap_after || 1000).toFixed(2)}</td>
                 </tr>`;
             }).join('');
         }
@@ -2990,21 +2629,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             document.querySelectorAll('.tab-content').forEach(p => {
                 p.classList.toggle('active', p.id === tabId);
             });
-            if (tabId === 'tab-matrix') {
-                applyMatrixFilterAndSort();
-            } else if (tabId === 'tab-analytics') {
+            if (tabId === 'tab-analytics') {
                 setTimeout(drawEquityChart, 60);
             } else if (tabId === 'tab-hawkes') {
                 setTimeout(() => {
-                    if (lastState) {
-                        drawHawkesGauge(lastState.btc_hawkes);
-                        renderHawkesSensitivityTable(lastState.leaderboard);
-                    }
+                    if (lastState) drawHawkesGauge(lastState.btc_hawkes);
                     drawHawkesTrajectory();
                 }, 60);
-            } else if (tabId === 'tab-ledger') {
-                lastLedgerHash = '';
-                applyLedgerFilter();
             }
         }
 

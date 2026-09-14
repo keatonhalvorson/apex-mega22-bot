@@ -5,7 +5,6 @@ Implements exact 1:1 mathematical parity with the 32-Month $11,727.69 backtest e
 """
 
 import math
-from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 import numpy as np
@@ -38,31 +37,8 @@ class Position:
     current_px: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
-    held_bars: int = 0
 
-    def to_dict(self, current_bar_index: Optional[int] = None) -> Dict[str, Any]:
-        time_diff_m = 0
-        time_bars = 0
-        if self.entry_time:
-            try:
-                et = datetime.fromisoformat(self.entry_time.replace("Z", "+00:00"))
-                now = datetime.now(timezone.utc)
-                time_diff_m = max(0, int((now - et).total_seconds() / 60))
-                time_bars = max(0, time_diff_m // 5)
-            except Exception:
-                pass
-
-        if current_bar_index is not None and current_bar_index > self.i:
-            bars = current_bar_index - self.i
-            duration_min = bars * 5
-        elif self.held_bars > 0:
-            bars = self.held_bars
-            duration_min = max(bars * 5, time_diff_m)
-        else:
-            bars = time_bars
-            duration_min = max(bars * 5, time_diff_m)
-
-        self.held_bars = bars
+    def to_dict(self) -> Dict[str, Any]:
         return {
             'sym': self.sym,
             'px': self.px,
@@ -77,19 +53,12 @@ class Position:
             'lowest_seen': self.lowest_seen,
             'current_px': self.current_px,
             'unrealized_pnl': self.unrealized_pnl,
-            'unrealized_pnl_pct': self.unrealized_pnl_pct,
-            'held_bars': bars,
-            'bars_held': bars,
-            'duration_min': duration_min
+            'unrealized_pnl_pct': self.unrealized_pnl_pct
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> 'Position':
-        valid_fields = {f for f in cls.__dataclass_fields__}
-        filtered = {k: v for k, v in d.items() if k in valid_fields}
-        if 'held_bars' not in filtered and 'bars_held' in d:
-            filtered['held_bars'] = int(d['bars_held'])
-        return cls(**filtered)
+        return cls(**d)
 
 @dataclass
 class TradeRecord:
@@ -107,18 +76,8 @@ class TradeRecord:
     entry_fee: float
     exit_fee: float
     reason: str
-    bars_held: int = 0
-    cap_after: float = 1000.0
-
-    @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> 'TradeRecord':
-        valid_fields = {f for f in cls.__dataclass_fields__}
-        filtered = {k: v for k, v in d.items() if k in valid_fields}
-        if 'bars_held' not in filtered:
-            filtered['bars_held'] = int(d.get('held_bars', 0))
-        if 'cap_after' not in filtered:
-            filtered['cap_after'] = float(d.get('capital_after', d.get('cap_after', 1000.0)))
-        return cls(**filtered)
+    bars_held: int
+    cap_after: float
 
     def to_dict(self) -> Dict[str, Any]:
         return {
