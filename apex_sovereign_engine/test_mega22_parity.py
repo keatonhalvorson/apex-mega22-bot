@@ -640,6 +640,39 @@ async def test_closed_candle_trailing_lock_exit(tmp_path):
     assert bot.trade_history[0].reason == 'TRAILING_LOCK'
     assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-6) == expected_stop_px
 
+def test_tick_low_piercing_trailing_lock_exit(tmp_path):
+    """
+    Verify that an intra-bar wick dip (low_px <= stop_price) triggers TRAILING_LOCK
+    even if current_px has temporarily bounced above stop_price.
+    """
+    from mega22_paper_bot import Mega22PaperBot
+    journal = tmp_path / "test_wick_lock.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    
+    pos = Position(
+        sym='TIAUSDT',
+        px=0.35227044,
+        notional=324.19,
+        entry_fee=0.13,
+        i=309,
+        entry_time='2026-09-13T22:10:03Z',
+        stop=-0.02924547,
+        trailing_active=True,
+        highest_since_trail=0.3668,
+        highest_seen=0.3687,
+        lowest_seen=0.3482,
+        current_px=0.3641
+    )
+    bot.active_positions['TIAUSDT'] = pos
+    expected_stop_px = pos.px * (1.0 - pos.stop)  # ~0.362573
+    
+    # Tick with current_px=0.3630 (> stop_px), but low_px=0.3620 (<= stop_px)
+    bot.on_tick_update('TIAUSDT', current_px=0.3630, high_px=0.3635, low_px=0.3620)
+    assert 'TIAUSDT' not in bot.active_positions, "Position must close when low_px pierces stop price!"
+    assert len(bot.trade_history) == 1
+    assert bot.trade_history[0].reason == 'TRAILING_LOCK'
+    assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-6) == expected_stop_px
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

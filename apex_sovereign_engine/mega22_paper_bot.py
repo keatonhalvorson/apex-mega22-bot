@@ -631,10 +631,10 @@ class Mega22PaperBot:
             if event is not None:
                 exit_px, reason = event
                 self._execute_position_close(symbol, exit_px, reason)
-            elif current_px <= stop_price:
+            elif current_px <= stop_price or low_px <= stop_price:
                 reason = 'TRAILING_LOCK' if updated_pos.stop <= 0 else 'STOP_LOSS'
                 self._execute_position_close(symbol, stop_price, reason)
-            elif current_px >= tp_price:
+            elif current_px >= tp_price or high_px >= tp_price:
                 self._execute_position_close(symbol, tp_price, 'TAKE_PROFIT')
 
     async def on_candle_closed(self, symbol: str, bar_data: Dict[str, Any]):
