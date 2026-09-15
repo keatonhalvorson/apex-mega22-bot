@@ -558,6 +558,88 @@ def test_multi_bar_trailing_ratchet_peak_preservation():
     assert pos.trailing_active is False
     assert pos.highest_since_trail == 10.50
 
+def test_realtime_tick_trailing_lock_exit(tmp_path):
+    """
+    Critical verification: When a trade reaches profit (+5%) and stop is raised/locked
+    (e.g. pos.stop = -0.029245 / +2.92%), on_tick_update MUST close the position immediately
+    when price pulls back to the locked stop level (0.362573), preventing a -$3 loss.
+    """
+    from mega22_paper_bot import Mega22PaperBot
+    journal = tmp_path / "test_tick_lock.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    
+    pos = Position(
+        sym='TIAUSDT',
+        px=0.35227044,
+        notional=324.19,
+        entry_fee=0.13,
+        i=309,
+        entry_time='2026-09-13T22:10:03Z',
+        stop=-0.02924547,
+        trailing_active=True,
+        highest_since_trail=0.3668,
+        highest_seen=0.3687,
+        lowest_seen=0.3482,
+        current_px=0.3641
+    )
+    bot.active_positions['TIAUSDT'] = pos
+    expected_stop_px = pos.px * (1.0 - pos.stop)  # ~0.362573 (+2.92%)
+    
+    # Tick above stop (0.3630) -> position must remain OPEN
+    bot.on_tick_update('TIAUSDT', current_px=0.3630, high_px=0.3630, low_px=0.3630)
+    assert 'TIAUSDT' in bot.active_positions
+    
+    # Pullback tick hits locked stop level (0.3625 <= 0.362573) -> MUST CLOSE IMMEDIATELY
+    bot.on_tick_update('TIAUSDT', current_px=0.3625, high_px=0.3625, low_px=0.3625)
+    assert 'TIAUSDT' not in bot.active_positions, "Position must be closed at locked profit stop!"
+    assert len(bot.trade_history) == 1
+    trade = bot.trade_history[0]
+    assert trade.reason == 'TRAILING_LOCK'
+    assert pytest.approx(trade.exit_px, rel=1e-6) == expected_stop_px
+    assert trade.net > 0, "Trailing lock must close with positive net profit!"
+
+@pytest.mark.asyncio
+async def test_closed_candle_trailing_lock_exit(tmp_path):
+    """Verify that on_candle_closed enforces trailing lock floor if tick was missed."""
+    from mega22_paper_bot import Mega22PaperBot
+    journal = tmp_path / "test_candle_lock.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    
+    pos = Position(
+        sym='TIAUSDT',
+        px=0.35227044,
+        notional=324.19,
+        entry_fee=0.13,
+        i=309,
+        entry_time='2026-09-13T22:10:03Z',
+        stop=-0.02924547,
+        trailing_active=True,
+        highest_since_trail=0.3668,
+        highest_seen=0.3687,
+        lowest_seen=0.3482,
+        current_px=0.3641
+    )
+    bot.active_positions['TIAUSDT'] = pos
+    expected_stop_px = pos.px * (1.0 - pos.stop)
+    
+    # Candle closes below locked stop floor (e.g. close=0.3620)
+    bar = {
+        'open_time': pd.to_datetime('2026-09-14 21:05:00'),
+        'open': 0.3635,
+        'high': 0.3638,
+        'low': 0.3615,
+        'close': 0.3620,
+        'volume': 1000.0,
+        'taker_buy': 500.0,
+        'taker_sell': 500.0,
+        'tbv_ratio': 0.5
+    }
+    await bot.on_candle_closed('TIAUSDT', bar)
+    assert 'TIAUSDT' not in bot.active_positions
+    assert len(bot.trade_history) == 1
+    assert bot.trade_history[0].reason == 'TRAILING_LOCK'
+    assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-6) == expected_stop_px
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

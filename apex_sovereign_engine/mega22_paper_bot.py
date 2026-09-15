@@ -624,9 +624,18 @@ class Mega22PaperBot:
             )
             self.active_positions[symbol] = updated_pos
             
+            # Explicit real-time price boundary enforcement (SL, TP, and dynamic profit lock / trailing ratchet)
+            stop_price = updated_pos.px * (1.0 - updated_pos.stop)
+            tp_price = updated_pos.px * (1.0 + TAKE_PROFIT_TARGET)
+
             if event is not None:
                 exit_px, reason = event
                 self._execute_position_close(symbol, exit_px, reason)
+            elif current_px <= stop_price:
+                reason = 'TRAILING_LOCK' if updated_pos.stop <= 0 else 'STOP_LOSS'
+                self._execute_position_close(symbol, stop_price, reason)
+            elif current_px >= tp_price:
+                self._execute_position_close(symbol, tp_price, 'TAKE_PROFIT')
 
     async def on_candle_closed(self, symbol: str, bar_data: Dict[str, Any]):
         """
@@ -649,6 +658,7 @@ class Mega22PaperBot:
                 exit_sig = 0
                 
             pos = self.active_positions[symbol]
+            prev_stop = pos.stop
             event, updated_pos = Mega22StrategyEngine.evaluate_position_step(
                 pos=pos,
                 c=bar_data['close'],
@@ -658,9 +668,22 @@ class Mega22PaperBot:
                 held=self.bar_index - pos.i
             )
             self.active_positions[symbol] = updated_pos
+
+            # Explicit real-time price boundary enforcement (SL, TP, and dynamic profit lock / trailing ratchet)
+            stop_price = updated_pos.px * (1.0 - updated_pos.stop)
+            tp_price = updated_pos.px * (1.0 + TAKE_PROFIT_TARGET)
+
             if event is not None:
                 exit_px, reason = event
                 self._execute_position_close(symbol, exit_px, reason)
+            elif prev_stop <= 0 and bar_data['low'] <= updated_pos.px * (1.0 - prev_stop):
+                exit_px = updated_pos.px * (1.0 - prev_stop)
+                self._execute_position_close(symbol, exit_px, 'TRAILING_LOCK')
+            elif bar_data['close'] <= stop_price:
+                reason = 'TRAILING_LOCK' if updated_pos.stop <= 0 else 'STOP_LOSS'
+                self._execute_position_close(symbol, stop_price, reason)
+            elif bar_data['close'] >= tp_price or bar_data['high'] >= tp_price:
+                self._execute_position_close(symbol, tp_price, 'TAKE_PROFIT')
 
         # Multi-Stream Synchronization by interval timestamp
         interval_t = bar_data['open_time']
