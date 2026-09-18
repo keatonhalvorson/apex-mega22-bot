@@ -255,7 +255,7 @@ def simulate_mega22_standalone(symbols_universe, initial_capital=1000.0, max_slo
             held = i - pos.i
             
             event, updated_pos = Mega22StrategyEngine.evaluate_position_step(
-                pos=pos, c=c, h=h, l=l, exit_sig=exit_sig, held=held
+                pos=pos, c=c, h=h, l=l, exit_sig=exit_sig, held=held, strict_parity=True
             )
             active_positions[sym] = updated_pos
             
@@ -672,6 +672,86 @@ def test_tick_low_piercing_trailing_lock_exit(tmp_path):
     assert len(bot.trade_history) == 1
     assert bot.trade_history[0].reason == 'TRAILING_LOCK'
     assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-6) == expected_stop_px
+
+def test_trailing_stop_raised_to_2_3_pct_drop_below_instant_exit(tmp_path):
+    """
+    Direct user regression test:
+    Position entered at 0.391178. Stop is raised to +2.3% (pos.stop = -0.023, stop_price = 0.400175).
+    Price drops below the stop to 0.39962 (+2.16%).
+    1. Mega22StrategyEngine.evaluate_position_step MUST return TRAILING_LOCK exit event.
+    2. Mega22PaperBot.on_tick_update MUST close the position immediately without manual override.
+    """
+    from mega22_paper_bot import Mega22PaperBot
+    
+    pos = Position(
+        sym='TIAUSDT',
+        px=0.391178,
+        notional=329.67,
+        entry_fee=0.1319,
+        i=1617,
+        entry_time='2026-09-18T11:10:03Z',
+        stop=-0.023,  # Raised to +2.3% locked profit
+        trailing_active=True,
+        highest_since_trail=0.40487,
+        highest_seen=0.40487,
+        lowest_seen=0.3910,
+        current_px=0.4020
+    )
+    expected_stop_px = pos.px * (1.0 - pos.stop)  # ~0.400175
+
+    # Paper bot live tick test (instant execution on tick below stop)
+    journal = tmp_path / "test_journal_2_3.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    bot.active_positions['TIAUSDT'] = pos
+    bot.on_tick_update('TIAUSDT', current_px=0.39962, high_px=0.4010, low_px=0.39962)
+    assert 'TIAUSDT' not in bot.active_positions, "Position must be closed immediately on tick below stop!"
+    assert len(bot.trade_history) == 1
+    assert bot.trade_history[0].reason == 'TRAILING_LOCK'
+    expected_exit_px = 0.391178 * (1.0 - (-0.02300196841335653))
+    assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-5) == expected_exit_px
+
+@pytest.mark.asyncio
+async def test_candle_low_piercing_raised_stop_instant_exit(tmp_path):
+    """
+    Verify that when stop is raised to +2.3%, a candle whose close bounced above stop
+    but whose low dipped below stop (e.g. low=0.3988, close=0.4008) triggers exit on candle close.
+    """
+    from mega22_paper_bot import Mega22PaperBot
+    journal = tmp_path / "test_journal_candle_2_3.json"
+    bot = Mega22PaperBot(journal_path=journal)
+    pos = Position(
+        sym='TIAUSDT',
+        px=0.391178,
+        notional=329.67,
+        entry_fee=0.1319,
+        i=1617,
+        entry_time='2026-09-18T11:10:03Z',
+        stop=-0.023,
+        trailing_active=True,
+        highest_since_trail=0.40487,
+        highest_seen=0.40487,
+        lowest_seen=0.3910,
+        current_px=0.4020
+    )
+    bot.active_positions['TIAUSDT'] = pos
+
+    bar = {
+        'open_time': pd.to_datetime('2026-09-18 13:45:00'),
+        'open': 0.4031,
+        'high': 0.4031,
+        'low': 0.3988,   # < 0.400175 stop price
+        'close': 0.4008, # > 0.400175 stop price
+        'volume': 1000.0,
+        'taker_buy': 500.0,
+        'taker_sell': 500.0,
+        'tbv_ratio': 0.5
+    }
+    await bot.on_candle_closed('TIAUSDT', bar)
+    assert 'TIAUSDT' not in bot.active_positions, "Position must close when candle low pierces stop price!"
+    assert len(bot.trade_history) == 1
+    assert bot.trade_history[0].reason == 'TRAILING_LOCK'
+    expected_stop_px = 0.391178 * (1.0 - (-0.02300196841335653))
+    assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-5) == expected_stop_px
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -679,7 +679,7 @@ class Mega22PaperBot:
             elif prev_stop <= 0 and bar_data['low'] <= updated_pos.px * (1.0 - prev_stop):
                 exit_px = updated_pos.px * (1.0 - prev_stop)
                 self._execute_position_close(symbol, exit_px, 'TRAILING_LOCK')
-            elif bar_data['close'] <= stop_price:
+            elif bar_data['close'] <= stop_price or bar_data['low'] <= stop_price:
                 reason = 'TRAILING_LOCK' if updated_pos.stop <= 0 else 'STOP_LOSS'
                 self._execute_position_close(symbol, stop_price, reason)
             elif bar_data['close'] >= tp_price or bar_data['high'] >= tp_price:

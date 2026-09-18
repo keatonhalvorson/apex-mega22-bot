@@ -277,7 +277,8 @@ class Mega22StrategyEngine:
         h: float,
         l: float,
         exit_sig: int,
-        held: int
+        held: int,
+        strict_parity: bool = False
     ) -> Tuple[Optional[Tuple[float, str]], Position]:
         """
         Evaluates active position exit conditions on bar or intra-bar prices.
@@ -288,6 +289,7 @@ class Mega22StrategyEngine:
         Returns: (exit_event, updated_position)
                  where exit_event is None or (exit_price, reason)
         """
+        prev_stop = pos.stop
         pnl = (c - pos.px) / pos.px
         best_pnl = (h - pos.px) / pos.px
         worst_pnl = (l - pos.px) / pos.px
@@ -326,8 +328,11 @@ class Mega22StrategyEngine:
         is_stalled = (held >= STALL_BARS_THRESHOLD) and (pnl < STALL_MAX_PNL) and (worst_pnl < STALL_WORST_MIN_PNL)
 
         if is_stop or is_tp or is_stalled:
-            if is_stop and pos.stop <= 0:
-                exit_px = pos.px * (1.0 + abs(pos.stop))
+            if is_tp and not (worst_pnl <= -prev_stop):
+                exit_px = pos.px * (1.0 + TAKE_PROFIT_TARGET)
+                reason = 'TAKE_PROFIT'
+            elif is_stop and pos.stop <= 0:
+                exit_px = pos.px * (1.0 - pos.stop)
                 reason = 'TRAILING_LOCK'
             elif is_stop:
                 exit_px = pos.px * (1.0 - pos.stop)
