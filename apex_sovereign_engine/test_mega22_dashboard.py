@@ -185,9 +185,10 @@ def test_fastapi_rest_endpoints():
     res = client.get("/api/tickers")
     assert res.status_code == 200
     tickers_dict = res.json()
-    assert len(tickers_dict) >= 22
+    assert len(tickers_dict) == len(ALL_SYMBOLS)
     assert any(t.get("group") == "GOLDEN_11" for t in tickers_dict.values())
     assert any(t.get("group") == "TITAN_11" for t in tickers_dict.values())
+    assert any(t.get("group") == "APEX_ALPHA" for t in tickers_dict.values())
 
     # GET /api/hawkes
     res_hawkes = client.get("/api/hawkes")

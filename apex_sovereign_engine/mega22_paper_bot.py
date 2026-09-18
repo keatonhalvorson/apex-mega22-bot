@@ -333,7 +333,7 @@ class Mega22PaperBot:
 
     async def bootstrap_historical_klines(self):
         """
-        Concurrently fetches initial 300 5m bars for all 23 pairs via async REST in ~1s.
+        Concurrently fetches initial 300 5m bars for all pairs (ALL_SYMBOLS: BTC + 30 Altcoins) via async REST in ~1s.
         Ensures rolling indicators have full warm-up immediately upon launch.
         """
         self.log_event("📡 Initializing High-Speed Market Bootstrap (300 bars per pair)...")
@@ -1066,7 +1066,9 @@ class Mega22PaperBot:
             "is_btc_safe": self.is_btc_safe,
             "golden_11": GOLDEN_11,
             "titan_11": TITAN_11,
+            "mega_22": MEGA_22,
             "apex_additions": APEX_ADDITIONS,
+            "apex_30": APEX_30,
             "active_universe": ACTIVE_UNIVERSE,
             "global_guard_active": self.bar_index <= self.stoploss_guard_until,
             "active_positions": [p.to_dict() for p in self.active_positions.values()],

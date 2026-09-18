@@ -380,6 +380,20 @@ def test_historical_replay_2024_02_parity():
         assert pytest.approx(t_m['exit_px'], rel=1e-6) == t_a['exit_px'], f"Trade {idx} exit px mismatch"
         assert pytest.approx(t_m['net'], rel=1e-6) == t_a['net'], f"Trade {idx} net PnL mismatch"
 
+def test_apex_30_historical_replay_2024_02_parity():
+    """
+    Direct historical replay parity test for Apex-30 Sovereign Champion universe on 2024-02 data.
+    Validates exact parity with backtest audit: exactly 55 trades and $1,195.70 ending capital.
+    """
+    p_btc = Path('/home/atheer/Desktop/Apex_Autonomous_Agent/apex_v2/data/full_year_2024/BTCUSDT_2024-02.pkl')
+    if not p_btc.exists():
+        pytest.skip("Historical 2024-02 data not found")
+        
+    res_apex = simulate_mega22_standalone(APEX_30, initial_capital=1000.0, max_slots=3, slot_frac=0.32)
+    assert res_apex['trades'] == 55, f"Expected exactly 55 trades in 2024-02 for Apex-30, got {res_apex['trades']}"
+    assert pytest.approx(res_apex['cap'], rel=1e-5) == 1195.70282, "Ending capital differs for Apex-30 2024-02 replay!"
+    assert pytest.approx(res_apex['net'], rel=1e-5) == 195.70282, "Net profit differs for Apex-30 2024-02 replay!"
+
 def test_cooldown_mechanics(tmp_path):
     """Verify coin-specific and global consecutive stop loss cooldown mechanics using Mega22PaperBot."""
     from mega22_paper_bot import Mega22PaperBot
