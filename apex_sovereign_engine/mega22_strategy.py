@@ -322,8 +322,16 @@ class Mega22StrategyEngine:
             if trail_stop_pct > 0.008 and -trail_stop_pct < pos.stop:
                 pos.stop = -trail_stop_pct
 
-        # 3. Check Exits (exact match to backtest condition)
-        is_stop = worst_pnl <= -pos.stop if pos.stop > 0 else worst_pnl <= pos.stop
+        # 3. Check Exits
+        if strict_parity:
+            is_stop = worst_pnl <= -pos.stop if pos.stop > 0 else worst_pnl <= pos.stop
+        elif pos.stop > 0:
+            is_stop = worst_pnl <= -pos.stop
+        else:
+            # Stop is locked in profit (pos.stop <= 0)
+            # If already locked in a previous bar/tick (prev_stop <= 0), price dipping below prev_stop exits immediately
+            # If newly locked on this bar (prev_stop > 0), bar close below new stop exits
+            is_stop = (worst_pnl <= -prev_stop) if prev_stop <= 0 else (pnl <= -pos.stop)
         is_tp = best_pnl >= TAKE_PROFIT_TARGET
         is_stalled = (held >= STALL_BARS_THRESHOLD) and (pnl < STALL_MAX_PNL) and (worst_pnl < STALL_WORST_MIN_PNL)
 

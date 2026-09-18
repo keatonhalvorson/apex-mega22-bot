@@ -542,17 +542,17 @@ def test_multi_bar_trailing_ratchet_peak_preservation():
     )
     # Bar 1: Price reaches high 10.50 (best_pnl +5%), locks parabolic tier 3 (-0.035), exit_sig=0
     event, pos = Mega22StrategyEngine.evaluate_position_step(
-        pos, c=10.30, h=10.50, l=10.05, exit_sig=0, held=1
+        pos, c=10.40, h=10.50, l=10.36, exit_sig=0, held=1
     )
     assert event is None
     assert pos.trailing_active is False
     assert pos.highest_since_trail == 10.50
     assert pos.stop == -0.035
     
-    # Bar 2: Price dips to 10.20 (high 10.25 < 10.50), exit_sig=0
-    # Crucial test: highest_since_trail must NOT be overwritten by 10.25!
+    # Bar 2: Price consolidates (high 10.45 < 10.50, staying above 10.35 lock), exit_sig=0
+    # Crucial test: highest_since_trail must NOT be overwritten by 10.45!
     event, pos = Mega22StrategyEngine.evaluate_position_step(
-        pos, c=10.15, h=10.25, l=10.10, exit_sig=0, held=2
+        pos, c=10.38, h=10.45, l=10.36, exit_sig=0, held=2
     )
     assert event is None
     assert pos.trailing_active is False
@@ -699,7 +699,16 @@ def test_trailing_stop_raised_to_2_3_pct_drop_below_instant_exit(tmp_path):
     )
     expected_stop_px = pos.px * (1.0 - pos.stop)  # ~0.400175
 
-    # Paper bot live tick test (instant execution on tick below stop)
+    # 1. Strategy Engine Direct Evaluation test (guarantees engine triggers exit)
+    event, _ = Mega22StrategyEngine.evaluate_position_step(
+        pos=pos, c=0.39962, h=0.4010, l=0.39962, exit_sig=0, held=31
+    )
+    assert event is not None, "Mega22StrategyEngine.evaluate_position_step must return exit event when price drops below stop!"
+    strat_exit_px, strat_reason = event
+    assert strat_reason == 'TRAILING_LOCK'
+    assert pytest.approx(strat_exit_px, rel=1e-5) == expected_stop_px
+
+    # 2. Paper bot live tick test (instant execution on tick below stop)
     journal = tmp_path / "test_journal_2_3.json"
     bot = Mega22PaperBot(journal_path=journal)
     bot.active_positions['TIAUSDT'] = pos

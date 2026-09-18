@@ -614,6 +614,7 @@ class Mega22PaperBot:
         
         if symbol in self.active_positions:
             pos = self.active_positions[symbol]
+            prev_stop = pos.stop
             event, updated_pos = Mega22StrategyEngine.evaluate_position_step(
                 pos=pos,
                 c=current_px,
@@ -627,6 +628,10 @@ class Mega22PaperBot:
             # Explicit real-time price boundary enforcement (SL, TP, and dynamic profit lock / trailing ratchet)
             stop_price = updated_pos.px * (1.0 - updated_pos.stop)
             tp_price = updated_pos.px * (1.0 + TAKE_PROFIT_TARGET)
+
+            if updated_pos.stop < prev_stop and updated_pos.stop <= 0:
+                pct = abs(updated_pos.stop) * 100.0
+                self.log_event(f"🏹 {symbol}: Protection ratcheted to +{pct:.2f}% (${stop_price:.4f})")
 
             if event is not None:
                 exit_px, reason = event
@@ -672,6 +677,10 @@ class Mega22PaperBot:
             # Explicit real-time price boundary enforcement (SL, TP, and dynamic profit lock / trailing ratchet)
             stop_price = updated_pos.px * (1.0 - updated_pos.stop)
             tp_price = updated_pos.px * (1.0 + TAKE_PROFIT_TARGET)
+
+            if updated_pos.stop < prev_stop and updated_pos.stop <= 0:
+                pct = abs(updated_pos.stop) * 100.0
+                self.log_event(f"🏹 {symbol}: Protection ratcheted to +{pct:.2f}% (${stop_price:.4f})")
 
             if event is not None:
                 exit_px, reason = event
