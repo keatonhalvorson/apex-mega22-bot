@@ -30,7 +30,8 @@ if str(CURRENT_DIR) not in sys.path:
 
 from mega22_paper_bot import Mega22PaperBot
 from mega22_constants import (
-    MEGA_22, GOLDEN_11, TITAN_11, MACRO_SYMBOL, ALL_SYMBOLS,
+    MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30, ACTIVE_UNIVERSE,
+    MACRO_SYMBOL, ALL_SYMBOLS,
     INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION, BTC_HAWKES_MAX_INTENSITY
 )
 
@@ -712,6 +713,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         }
         .badge-grp.G-11 { background: rgba(0, 212, 255, 0.18); color: var(--accent-cyan); border: 1px solid rgba(0, 212, 255, 0.3); }
         .badge-grp.T-11 { background: rgba(251, 191, 36, 0.18); color: var(--accent-amber); border: 1px solid rgba(251, 191, 36, 0.3); }
+        .badge-grp.A-Alpha { background: rgba(168, 85, 247, 0.18); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.3); }
 
         .hm-price {
             font-size: 0.94rem;
@@ -1243,12 +1245,13 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             <div class="panel">
                 <div class="panel-header">
                     <div class="panel-title">
-                        <span>🔥 الخريطة الحرارية اللحظية للـ 22 عملة (Sub-Second Market Heatmap)</span>
+                        <span>🔥 الخريطة الحرارية اللحظية (Apex-30 Real-Time Market Heatmap)</span>
                     </div>
                     <div class="filter-strip">
-                        <span class="filter-pill active" onclick="setHeatmapFilter('all', this)">الكل (22)</span>
+                        <span class="filter-pill active" onclick="setHeatmapFilter('all', this)">الكل (30)</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('GOLDEN_11', this)">⚡ Golden-11</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('TITAN_11', this)">🏛️ Titan-11</span>
+                        <span class="filter-pill" onclick="setHeatmapFilter('APEX_ALPHA', this)">👑 Apex-Alpha</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('pos', this)">🟢 صفقات نشطة</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('triggered', this)">🚀 إشارات انفجار</span>
                     </div>
@@ -1927,6 +1930,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 filtered = filtered.filter(x => x.group === 'GOLDEN_11');
             } else if (heatmapFilterMode === 'TITAN_11') {
                 filtered = filtered.filter(x => x.group === 'TITAN_11');
+            } else if (heatmapFilterMode === 'APEX_ALPHA') {
+                filtered = filtered.filter(x => x.group === 'APEX_ALPHA');
             } else if (heatmapFilterMode === 'pos') {
                 filtered = filtered.filter(x => x.status === 'POSITION_OPEN');
             } else if (heatmapFilterMode === 'triggered') {
@@ -1936,8 +1941,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             container.innerHTML = filtered.map(item => {
                 const isPos = item.change_24h >= 0;
                 const chgSign = isPos ? '+' : '';
-                const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
-                const grpLabel = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+                const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : (item.group === 'TITAN_11' ? 'T-11' : 'A-Alpha');
+                const grpLabel = item.group === 'GOLDEN_11' ? 'G-11' : (item.group === 'TITAN_11' ? 'T-11' : 'Apex');
                 const volM = ((item.vol_quote || 0) / 1000000.0).toFixed(1);
 
                 return `
@@ -2464,7 +2469,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 return;
             }
             tbody.innerHTML = items.map(c => {
-                const grpClass = c.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+                const grpClass = c.group === 'GOLDEN_11' ? 'G-11' : (c.group === 'TITAN_11' ? 'T-11' : 'A-Alpha');
                 const isSafe = (lastState && lastState.is_btc_safe);
                 const shieldStatus = c.status === 'POSITION_OPEN' ? '🟢 مركز مفتوح' : (isSafe ? 'مفتوح للدخول 🟢' : 'محمي بدرع هوكس 🛑');
                 return `
@@ -2509,7 +2514,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 const isPos = (item.change_24h || 0) >= 0;
                 const sign = isPos ? '+' : '';
                 const volM = ((item.vol_quote || 0) / 1000000.0).toFixed(1);
-                const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : 'T-11';
+                const grpClass = item.group === 'GOLDEN_11' ? 'G-11' : (item.group === 'TITAN_11' ? 'T-11' : 'A-Alpha');
 
                 return `
                 <tr>

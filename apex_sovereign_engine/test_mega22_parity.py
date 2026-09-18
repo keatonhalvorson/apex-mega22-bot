@@ -18,7 +18,8 @@ if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
 from mega22_constants import (
-    MEGA_22, GOLDEN_11, TITAN_11, MACRO_SYMBOL, INITIAL_CAPITAL,
+    MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30, ACTIVE_UNIVERSE,
+    MACRO_SYMBOL, ALL_SYMBOLS, INITIAL_CAPITAL,
     MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS
@@ -34,6 +35,17 @@ def test_mega_22_universe_composition():
     assert set(MEGA_22) == set(GOLDEN_11).union(set(TITAN_11))
     assert 'BTCUSDT' not in MEGA_22
     assert MACRO_SYMBOL == 'BTCUSDT'
+
+def test_apex_30_universe_composition():
+    """Verify that Sovereign Apex-30 properly encompasses Mega-22 and the 8 high-alpha champion altcoins."""
+    assert len(APEX_30) == 30
+    assert set(MEGA_22).issubset(set(APEX_30))
+    assert len(APEX_ADDITIONS) == 8
+    assert len(set(APEX_30)) == 30
+    assert 'BTCUSDT' not in APEX_30
+    assert ACTIVE_UNIVERSE == APEX_30
+    assert ALL_SYMBOLS == [MACRO_SYMBOL] + ACTIVE_UNIVERSE
+    assert len(ALL_SYMBOLS) == 31
 
 def test_btc_hawkes_exact_math_parity():
     """Test that Hawkes Self-Exciting Cascade Shield math is identical to the baseline engine."""

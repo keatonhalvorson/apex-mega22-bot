@@ -22,7 +22,8 @@ import numpy as np
 import pandas as pd
 
 from mega22_constants import (
-    MEGA_22, GOLDEN_11, TITAN_11, MACRO_SYMBOL, ALL_SYMBOLS,
+    MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30, ACTIVE_UNIVERSE,
+    MACRO_SYMBOL, ALL_SYMBOLS,
     INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET, STALL_BARS_THRESHOLD,
@@ -33,10 +34,9 @@ from mega22_strategy import Mega22StrategyEngine, Position, TradeRecord
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    format="%(asctime)s [%(levelname)s] [%(name)s]: %(message)s"
 )
-logger = logging.getLogger("Mega22Bot")
+logger = logging.getLogger("Mega22PaperBot")
 
 JOURNAL_FILE = Path(__file__).resolve().parent / "live_trade_journal.json"
 BINANCE_REST_URLS = [
@@ -51,7 +51,8 @@ BINANCE_WS_URLS = [
 
 class Mega22PaperBot:
     """
-    Production-Grade Real-Time Spot Paper Trading Bot.
+    Sub-second real-time paper trading bot executing the 32-Month Validated Mega-22 / Apex-30 Strategy.
+    Connects to Binance Spot Public WebSocket Stream (zero API keys required).
     Runs asynchronously, maintaining fixed-size ring buffers in memory.
     """
     def __init__(self, journal_path: Path = JOURNAL_FILE):
@@ -63,7 +64,7 @@ class Mega22PaperBot:
         
         # Risk & Cooldown State
         self.bar_index: int = 0
-        self.cooldowns: Dict[str, int] = {s: -1 for s in MEGA_22}
+        self.cooldowns: Dict[str, int] = {s: -1 for s in ACTIVE_UNIVERSE}
         self.consecutive_stops: int = 0
         self.stoploss_guard_until: int = -1
         
@@ -84,7 +85,7 @@ class Mega22PaperBot:
                 "best_bid": 0.0,
                 "best_ask": 0.0,
                 "spread_bps": 0.0,
-                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else "MACRO"),
+                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else "MACRO")),
                 "tick_dir": "flat"
             } for s in ALL_SYMBOLS
         }
@@ -156,7 +157,7 @@ class Mega22PaperBot:
             self.bar_index = int(data.get("bar_index", 0))
             self.consecutive_stops = int(data.get("consecutive_stops", 0))
             self.stoploss_guard_until = int(data.get("stoploss_guard_until", -1))
-            self.cooldowns = data.get("cooldowns", {s: -1 for s in MEGA_22})
+            self.cooldowns = data.get("cooldowns", {s: -1 for s in ACTIVE_UNIVERSE})
             
             raw_pos = data.get("active_positions", {})
             self.active_positions = {}
@@ -382,7 +383,7 @@ class Mega22PaperBot:
                                         b = float(td.get('bidPrice', td.get('b', c)))
                                         a = float(td.get('askPrice', td.get('a', c)))
                                         spread = ((a - b) / c * 10000.0) if c > 0 else 0.0
-                                        group = "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else "MACRO")
+                                        group = "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else "MACRO"))
                                         
                                         self.latest_prices[s] = c
                                         self.latest_tickers[s] = {
@@ -488,7 +489,7 @@ class Mega22PaperBot:
                     "btc_price": round(float(last_btc['btc_c']), 2)
                 })
         
-        for sym in MEGA_22:
+        for sym in ACTIVE_UNIVERSE:
             df_alt = self._df_from_buffer(sym)
             if df_alt is None:
                 continue
@@ -544,7 +545,7 @@ class Mega22PaperBot:
         a = float(data.get('a', c))
         spread_bps = ((a - b) / c * 10000.0) if c > 0 else 0.0
 
-        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else "MACRO")
+        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else ("APEX_ALPHA" if symbol in APEX_ADDITIONS else "MACRO"))
 
         self.latest_tickers[symbol] = {
             'sym': symbol,
@@ -833,7 +834,7 @@ class Mega22PaperBot:
             
         avail_slots = MAX_SLOTS - len(self.active_positions)
         cands = []
-        for sym in MEGA_22:
+        for sym in ACTIVE_UNIVERSE:
             if sym in self.active_positions:
                 continue
             if self.bar_index <= self.cooldowns.get(sym, -1):
@@ -888,7 +889,7 @@ class Mega22PaperBot:
         self._cached_stats = None
         self.consecutive_stops = 0
         self.stoploss_guard_until = -1
-        self.cooldowns = {s: -1 for s in MEGA_22}
+        self.cooldowns = {s: -1 for s in ACTIVE_UNIVERSE}
         self._closed_candles_in_interval.clear()
         self._processed_intervals.clear()
         for task in self._pending_debounce_tasks.values():
@@ -982,7 +983,7 @@ class Mega22PaperBot:
         
         # Build scanner leaderboard enriched with sub-second ticker data
         leaderboard = []
-        for sym in MEGA_22:
+        for sym in ACTIVE_UNIVERSE:
             ind = self.latest_indicators.get(sym, {})
             px = self.latest_prices.get(sym, 0.0)
             ticker = self.latest_tickers.get(sym, {})
@@ -994,7 +995,7 @@ class Mega22PaperBot:
             )
             leaderboard.append({
                 "sym": sym,
-                "group": "GOLDEN_11" if sym in GOLDEN_11 else "TITAN_11",
+                "group": "GOLDEN_11" if sym in GOLDEN_11 else ("TITAN_11" if sym in TITAN_11 else "APEX_ALPHA"),
                 "price": px,
                 "change_24h": ticker.get('change_24h', 0.0),
                 "high_24h": ticker.get('high_24h', px),
@@ -1065,6 +1066,8 @@ class Mega22PaperBot:
             "is_btc_safe": self.is_btc_safe,
             "golden_11": GOLDEN_11,
             "titan_11": TITAN_11,
+            "apex_additions": APEX_ADDITIONS,
+            "active_universe": ACTIVE_UNIVERSE,
             "global_guard_active": self.bar_index <= self.stoploss_guard_until,
             "active_positions": [p.to_dict() for p in self.active_positions.values()],
             "recent_trades": [t.to_dict() for t in self.trade_history[-20:]],
