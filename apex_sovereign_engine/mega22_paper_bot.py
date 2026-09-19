@@ -29,7 +29,9 @@ from mega22_constants import (
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET, STALL_BARS_THRESHOLD,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS,
-    BUFFER_MAX_BARS, BTC_HAWKES_MAX_INTENSITY, BTC_24H_MIN_PCT, BTC_4H_MIN_PCT
+    BUFFER_MAX_BARS, BTC_HAWKES_MAX_INTENSITY, BTC_24H_MIN_PCT, BTC_4H_MIN_PCT,
+    ENABLE_OPPORTUNITY_ROTATION, ROTATION_MIN_SCORE, ROTATION_HELD_BARS,
+    ROTATION_MAX_PNL, ROTATION_MIN_PNL, ROTATION_SCORE_EDGE
 )
 from mega22_strategy import Mega22StrategyEngine, Position, TradeRecord
 
@@ -825,16 +827,17 @@ class Mega22PaperBot:
     def _evaluate_portfolio_entries(self):
         """
         Evaluates top-ranked candidates across the active 35-coin universe and executes entries.
-        Matches exact logic of simulate_engine_rigorous lines 187-208.
+        Implements:
+        1. Real-time cross-sectional alpha score ranking.
+        2. Institutional Smart Opportunity-Cost Rotation (eviction of stagnant assets for explosive alpha).
+        3. Institutional Equal-Equity Slot Sizing with 100% Halal Spot pure cash conservation.
         """
         if self.is_paused:
             return
-        if len(self.active_positions) >= MAX_SLOTS:
-            return
         if self.bar_index <= self.stoploss_guard_until:
             return
-            
-        avail_slots = MAX_SLOTS - len(self.active_positions)
+
+        # Candidate collection across active universe
         cands = []
         for sym in ACTIVE_UNIVERSE:
             if sym in self.active_positions:
@@ -842,19 +845,59 @@ class Mega22PaperBot:
             if self.bar_index <= self.cooldowns.get(sym, -1):
                 continue
             ind = self.latest_indicators.get(sym)
-            if ind and ind['is_cand'] == 1:
-                cands.append((sym, ind['score'], ind['price']))
-                
-        # Rank by Explosion Alpha Score descending
-        cands.sort(key=lambda x: x[1], reverse=True)
-        
-        for sym, score, raw_px in cands[:avail_slots]:
-            target_notional = self.available_cash * SLOT_FRACTION
+            if ind and ind.get('is_cand') == 1:
+                cands.append((sym, float(ind['score']), float(ind['price'])))
+
+        # Cross-sectional ranking by Explosion Alpha Score descending
+        cands = Mega22StrategyEngine.rank_cross_sectional_candidates(cands)
+
+        # Smart Opportunity-Cost Rotation:
+        # If at max capacity and a high-conviction candidate emerges (score >= ROTATION_MIN_SCORE),
+        # check if any active position is stagnant (held >= ROTATION_HELD_BARS, ROTATION_MIN_PNL <= PnL <= ROTATION_MAX_PNL, stop > 0)
+        # and candidate holds score advantage >= ROTATION_SCORE_EDGE.
+        if ENABLE_OPPORTUNITY_ROTATION and len(self.active_positions) >= MAX_SLOTS and len(cands) > 0:
+            top_cand_sym, top_cand_score, _ = cands[0]
+            if top_cand_score >= ROTATION_MIN_SCORE:
+                evictable = []
+                for sym, pos in self.active_positions.items():
+                    held = self.bar_index - pos.i
+                    curr_px = self.latest_prices.get(sym, pos.px)
+                    pnl = (curr_px - pos.px) / pos.px
+                    pos_score = getattr(pos, 'score', 0.0)
+                    if (held >= ROTATION_HELD_BARS and
+                        ROTATION_MIN_PNL <= pnl <= ROTATION_MAX_PNL and
+                        pos.stop > 0 and
+                        (top_cand_score - pos_score) >= ROTATION_SCORE_EDGE):
+                        evictable.append((sym, held, pnl, pos_score))
+                if evictable:
+                    # Evict longest-held stagnant position first
+                    evictable.sort(key=lambda x: -x[1])
+                    sym_evict = evictable[0][0]
+                    curr_px = self.latest_prices.get(sym_evict, self.active_positions[sym_evict].px)
+                    exit_px = curr_px * (1.0 - SLIPPAGE_RATE)
+                    self.log_event(
+                        f"🔄 ROTATION EVICTION: Evicting stagnant {sym_evict} (held {evictable[0][1]} bars, PnL: {evictable[0][2]*100:+.2f}%) "
+                        f"for high-alpha candidate {top_cand_sym} (Score: {top_cand_score:.1f} vs {evictable[0][3]:.1f})",
+                        "INFO"
+                    )
+                    self._execute_position_close(sym_evict, exit_px, "ROTATION_EVICT")
+
+        if len(self.active_positions) >= MAX_SLOTS:
+            return
+
+        avail_slots = MAX_SLOTS - len(self.active_positions)
+        valid_cands = [c for c in cands if c[0] not in self.active_positions]
+
+        for sym, score, raw_px in valid_cands[:avail_slots]:
+            # Institutional Equal-Equity Slot Sizing: allocates 32% of current portfolio total equity
+            total_equity = self.available_cash + sum(p.notional for p in self.active_positions.values())
+            target_notional = min(total_equity * SLOT_FRACTION, self.available_cash / (1.0 + FEE_RATE))
+
             if self.available_cash >= target_notional and target_notional > 50.0:
                 epx = raw_px * (1.0 + SLIPPAGE_RATE)
                 ef = target_notional * FEE_RATE
                 self.available_cash -= (target_notional + ef)
-                
+
                 pos = Position(
                     sym=sym,
                     px=epx,
@@ -865,10 +908,14 @@ class Mega22PaperBot:
                     stop=STOP_LOSS_TARGET,
                     highest_seen=epx,
                     lowest_seen=epx,
-                    current_px=epx
+                    current_px=epx,
+                    score=score
                 )
                 self.active_positions[sym] = pos
-                self.log_event(f"🚀 ENTERED {sym} @ ${epx:.4f} | Size: ${target_notional:.2f} | Alpha Score: {score:.2f} | Remaining Cash: ${self.available_cash:.2f}")
+                self.log_event(
+                    f"🚀 ENTERED {sym} @ ${epx:.4f} | Size: ${target_notional:.2f} | "
+                    f"Alpha Score: {score:.2f} | Remaining Cash: ${self.available_cash:.2f}"
+                )
                 self._save_journal()
                 self._broadcast("position_opened", pos.to_dict())
 

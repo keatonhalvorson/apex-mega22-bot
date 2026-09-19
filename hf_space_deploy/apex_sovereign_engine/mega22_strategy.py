@@ -37,6 +37,7 @@ class Position:
     current_px: float = 0.0
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
+    score: float = 0.0               # Alpha explosion score at entry
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -53,12 +54,15 @@ class Position:
             'lowest_seen': self.lowest_seen,
             'current_px': self.current_px,
             'unrealized_pnl': self.unrealized_pnl,
-            'unrealized_pnl_pct': self.unrealized_pnl_pct
+            'unrealized_pnl_pct': self.unrealized_pnl_pct,
+            'score': self.score
         }
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> 'Position':
-        return cls(**d)
+        valid_fields = cls.__dataclass_fields__.keys()
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        return cls(**filtered)
 
 @dataclass
 class TradeRecord:
@@ -269,6 +273,17 @@ class Mega22StrategyEngine:
         # Exit long signal (trigger for trailing ratchet activation)
         df['exit_long'] = (df['close'] > df['bb_mid']).astype(int)
         return df
+
+    @staticmethod
+    def rank_cross_sectional_candidates(
+        candidates: List[Tuple[str, float, Any]]
+    ) -> List[Tuple[str, float, Any]]:
+        """
+        Cross-sectional ranking of candidate tokens by their explosion alpha score.
+        Input: list of candidate tuples (symbol, score, ...)
+        Output: sorted descending by score.
+        """
+        return sorted(candidates, key=lambda x: x[1], reverse=True)
 
     @staticmethod
     def evaluate_position_step(

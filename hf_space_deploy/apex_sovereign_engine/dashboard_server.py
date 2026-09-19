@@ -1498,6 +1498,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                         <option value="TP">أهداف كاملة (TP)</option>
                         <option value="SL">وقف خسارة (SL)</option>
                         <option value="TRAILING">حصد القمم (Trail)</option>
+                        <option value="ROTATION">تدوير ذكي (Rotation) 🔄</option>
                     </select>
                     <button class="btn-action btn-csv" onclick="downloadTradesCSV()">📥 تصدير سجل الصفقات (CSV)</button>
                 </div>
@@ -2566,6 +2567,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 if (filterMode === 'TP') return t.reason === 'TAKE_PROFIT';
                 if (filterMode === 'SL') return t.reason === 'STOP_LOSS';
                 if (filterMode === 'TRAILING') return t.reason === 'TRAILING_LOCK';
+                if (filterMode === 'ROTATION') return t.reason === 'ROTATION_EVICT';
                 return true;
             });
 
@@ -2585,6 +2587,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 else if (t.reason === 'TRAILING_LOCK') reasonAr = 'حصد أرباح القمة 🔒';
                 else if (t.reason === 'STOP_LOSS') reasonAr = 'وقف خسارة (-2.2%) 🛑';
                 else if (t.reason === 'STALL_EXIT') reasonAr = 'خروج ركود ⏳';
+                else if (t.reason === 'ROTATION_EVICT') reasonAr = 'تدوير ذكي واقتناص 🔄';
                 else if (t.reason === 'EMERGENCY_OVERRIDE' || t.reason === 'EMERGENCY_CLOSE_ALL') reasonAr = 'إغلاق طوارئ يدوي 🚨';
 
                 return `

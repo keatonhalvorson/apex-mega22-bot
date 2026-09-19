@@ -830,6 +830,96 @@ async def test_candle_low_piercing_raised_stop_instant_exit(tmp_path):
     expected_stop_px = 0.391178 * (1.0 - (-0.02300196841335653))
     assert pytest.approx(bot.trade_history[0].exit_px, rel=1e-5) == expected_stop_px
 
+def test_opportunity_cost_rotation_and_equal_equity_sizing(tmp_path):
+    """
+    Verify institutional opportunity-cost rotation and equal-equity slot sizing:
+    1. Evicts longest-held stagnant position when a high-alpha candidate arrives.
+    2. Protects positions with locked profit (stop <= 0) or deep drawdown (< -1.5%).
+    3. Sizes incoming candidate using portfolio total equity rather than diminishing cash.
+    """
+    from mega22_paper_bot import Mega22PaperBot
+    journal = tmp_path / "test_rotation.json"
+    bot = Mega22PaperBot(journal_path=journal)
+
+    bot.bar_index = 50
+    bot.available_cash = 100.0  # Cash depleted after 3 positions
+
+    # Position 1: NEARUSDT - held 25 bars, stagnant (+0.04% pnl), stop > 0, score 5.0 -> EVICTABLE (held 25)
+    pos_near = Position(
+        sym='NEARUSDT', px=5.000, notional=300.0, entry_fee=0.12,
+        i=25, entry_time='2026-09-18T10:00:00Z', stop=0.022, score=5.0
+    )
+    # Position 2: ADAUSDT - held 20 bars, stagnant (-1.0% pnl), stop > 0, score 6.0 -> EVICTABLE (held 20)
+    pos_ada = Position(
+        sym='ADAUSDT', px=1.000, notional=300.0, entry_fee=0.12,
+        i=30, entry_time='2026-09-18T10:25:00Z', stop=0.022, score=6.0
+    )
+    # Position 3: DOGEUSDT - held 10 bars (< 18 threshold), score 8.0 -> PROTECTED
+    pos_doge = Position(
+        sym='DOGEUSDT', px=0.100, notional=300.0, entry_fee=0.12,
+        i=40, entry_time='2026-09-18T11:15:00Z', stop=0.022, score=8.0
+    )
+
+    bot.active_positions = {
+        'NEARUSDT': pos_near,
+        'ADAUSDT': pos_ada,
+        'DOGEUSDT': pos_doge
+    }
+    bot.latest_prices = {
+        'NEARUSDT': 5.002,
+        'ADAUSDT': 0.990,
+        'DOGEUSDT': 0.100,
+        'ORDIUSDT': 50.000
+    }
+
+    # Candidate: ORDIUSDT with high explosion score = 25.0
+    bot.latest_indicators['ORDIUSDT'] = {
+        'is_cand': 1, 'score': 25.0, 'price': 50.000
+    }
+
+    # Trigger evaluation
+    bot._evaluate_portfolio_entries()
+
+    # 1. NEARUSDT must be evicted (longest held stagnant: 25 bars vs ADA's 20 bars)
+    assert 'NEARUSDT' not in bot.active_positions, "NEARUSDT should have been evicted!"
+    assert 'ADAUSDT' in bot.active_positions, "ADAUSDT should remain active"
+    assert 'DOGEUSDT' in bot.active_positions, "DOGEUSDT should remain active"
+
+    # 2. Eviction recorded in trade history
+    evict_trades = [t for t in bot.trade_history if t.reason == 'ROTATION_EVICT']
+    assert len(evict_trades) == 1
+    assert evict_trades[0].sym == 'NEARUSDT'
+
+    # 3. ORDIUSDT entered with equal-equity sizing
+    assert 'ORDIUSDT' in bot.active_positions
+    pos_ordi = bot.active_positions['ORDIUSDT']
+    assert pos_ordi.score == 25.0
+
+    # Total equity after NEAR refund was ~1000, so notional ~320
+    assert pos_ordi.notional > 250.0
+
+    # 4. EDGE CASE TESTS:
+    # 4a. Candidate score < 15.0 must NOT cause eviction
+    bot.latest_indicators['ICPUSDT'] = {'is_cand': 1, 'score': 14.0, 'price': 10.0}
+    bot.latest_prices['ICPUSDT'] = 10.0
+    before_count = len(bot.trade_history)
+    bot._evaluate_portfolio_entries()
+    assert len(bot.trade_history) == before_count, "Score < 15.0 must not trigger eviction!"
+
+    # 4b. Positions with locked profit (stop <= 0) must NEVER be evicted
+    pos_ada.stop = -0.008  # Locked profit
+    pos_doge.i = 20        # Now held 30 bars (eligible on time)
+    pos_doge.score = 22.0  # Low score edge: 25 - 22 = 3.0 < 5.0
+    bot.latest_indicators['ICPUSDT'] = {'is_cand': 1, 'score': 25.0, 'price': 10.0}
+    bot._evaluate_portfolio_entries()
+    assert len(bot.trade_history) == before_count, "Protected positions (locked profit or small edge) must not be evicted!"
+
+    # 4c. Deep drawdown (< -1.5%) must NOT be evicted (stop loss will handle it)
+    pos_ada.stop = 0.022
+    bot.latest_prices['ADAUSDT'] = 0.980  # -2.0% drawdown (< -1.5%)
+    bot._evaluate_portfolio_entries()
+    assert len(bot.trade_history) == before_count, "Deep drawdown position (< -1.5%) must not be evicted!"
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

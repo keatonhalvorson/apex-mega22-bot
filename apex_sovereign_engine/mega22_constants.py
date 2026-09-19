@@ -36,7 +36,7 @@ APEX_35_EXPANSION = [
     'CKBUSDT', 'ROSEUSDT', 'JASMYUSDT', 'PYTHUSDT', 'ANKRUSDT'
 ]
 
-# Sovereign Champion Universe (Apex-35: 35 Coins, 100% Halal, 100% Net Profitable, Sharpe 3.74, +936.48% Net ROE, $10,364.80)
+# Sovereign Champion Universe (Apex-35: 35 Coins, 100% Halal, 100% Net Profitable, Sharpe 3.68, +1,575.12% Net ROE, $16,751.22)
 APEX_35 = list(dict.fromkeys(APEX_30 + APEX_35_EXPANSION))
 
 # Active Trading Universe (default configured for the Apex-35 Sovereign Champion expansion)
@@ -83,6 +83,14 @@ TRAILING_OFFSET = 0.012          # 1.2% trail distance below highest price reach
 STALL_BARS_THRESHOLD = 60        # 60 bars (5 hours)
 STALL_MAX_PNL = 0.001           # PnL < +0.1%
 STALL_WORST_MIN_PNL = -0.010    # worst PnL dipped below -1.0%
+
+# Smart Opportunity-Cost Rotation Parameters (Institutional Active Alpha Rotation)
+ENABLE_OPPORTUNITY_ROTATION = True
+ROTATION_MIN_SCORE = 15.0       # Candidate explosion alpha score threshold
+ROTATION_HELD_BARS = 18         # Minimum holding period (1.5 hours) before eviction eligibility
+ROTATION_MAX_PNL = 0.002        # Evict only stagnant positions with PnL <= +0.2%
+ROTATION_MIN_PNL = -0.015       # Don't evict positions in deep drawdown (PnL < -1.5%), let stop loss protect
+ROTATION_SCORE_EDGE = 5.0       # Minimum score advantage candidate must hold over position
 
 # Risk Cooldown Durations (in 5-minute bars)
 COOLDOWN_STOP_LOSS_BARS = 24    # 24 bars (2 hours) per-coin cooldown after stop loss
