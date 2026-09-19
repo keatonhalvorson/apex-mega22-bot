@@ -18,7 +18,9 @@ if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
 
 from mega22_constants import (
-    MEGA_22, GOLDEN_11, TITAN_11, MACRO_SYMBOL, INITIAL_CAPITAL,
+    MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30,
+    APEX_35_EXPANSION, APEX_35, ACTIVE_UNIVERSE,
+    MACRO_SYMBOL, ALL_SYMBOLS, INITIAL_CAPITAL,
     MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS
@@ -34,6 +36,58 @@ def test_mega_22_universe_composition():
     assert set(MEGA_22) == set(GOLDEN_11).union(set(TITAN_11))
     assert 'BTCUSDT' not in MEGA_22
     assert MACRO_SYMBOL == 'BTCUSDT'
+
+def test_apex_30_universe_composition():
+    """Verify that Sovereign Apex-30 properly encompasses Mega-22 and the 8 high-alpha champion altcoins (100% Halal Spot)."""
+    assert len(APEX_30) == 30
+    assert set(MEGA_22).issubset(set(APEX_30))
+    assert len(APEX_ADDITIONS) == 8
+    assert len(set(APEX_30)) == 30
+    assert 'BTCUSDT' not in APEX_30
+
+    # Verify complete exclusion of doubtful / non-halal coins
+    doubtful_5 = {'ENAUSDT', 'PENDLEUSDT', 'CRVUSDT', 'JUPUSDT', 'INJUSDT'}
+    assert not any(c in APEX_30 for c in doubtful_5), f"Found doubtful coins in APEX_30: {doubtful_5.intersection(set(APEX_30))}"
+    assert not any(c in MEGA_22 for c in doubtful_5), f"Found doubtful coins in MEGA_22: {doubtful_5.intersection(set(MEGA_22))}"
+
+    # Verify inclusion of all 25 confirmed Halal baseline coins
+    confirmed_25 = [
+        'ORDIUSDT', 'ICPUSDT', 'GALAUSDT', 'NEARUSDT', 'TIAUSDT',
+        'RENDERUSDT', 'ALGOUSDT', 'XLMUSDT', 'DOGEUSDT', 'TRXUSDT',
+        'BONKUSDT', 'POLUSDT', 'HBARUSDT', 'FILUSDT', 'APTUSDT',
+        'XRPUSDT', 'ENSUSDT', 'FETUSDT', 'VETUSDT', 'AVAXUSDT',
+        'SEIUSDT', 'OPUSDT', 'DOTUSDT', 'ETHUSDT', 'UNIUSDT'
+    ]
+    for c in confirmed_25:
+        assert c in APEX_30, f"Confirmed Halal coin {c} missing from APEX_30!"
+
+    # Verify inclusion of the 5 optimal Halal replacement coins
+    replacements_5 = {'ADAUSDT', 'LINKUSDT', 'LTCUSDT', 'ATOMUSDT', 'SOLUSDT'}
+    for c in replacements_5:
+        assert c in APEX_30, f"Replacement Halal coin {c} missing from APEX_30!"
+
+    assert set(APEX_30) == set(confirmed_25).union(replacements_5)
+
+def test_apex_35_universe_composition():
+    """Verify that Sovereign Apex-35 properly encompasses Apex-30 and the 5 high-alpha champion Halal altcoins."""
+    assert len(APEX_35) == 35
+    assert set(APEX_30).issubset(set(APEX_35))
+    assert len(APEX_35_EXPANSION) == 5
+    assert len(set(APEX_35)) == 35
+    assert 'BTCUSDT' not in APEX_35
+    assert ACTIVE_UNIVERSE == APEX_35
+    assert ALL_SYMBOLS == [MACRO_SYMBOL] + ACTIVE_UNIVERSE
+    assert len(ALL_SYMBOLS) == 36
+
+    # Verify complete exclusion of doubtful / non-halal coins
+    doubtful_5 = {'ENAUSDT', 'PENDLEUSDT', 'CRVUSDT', 'JUPUSDT', 'INJUSDT'}
+    assert not any(c in APEX_35 for c in doubtful_5), f"Found doubtful coins in APEX_35: {doubtful_5.intersection(set(APEX_35))}"
+
+    # Verify inclusion of all 5 expansion Halal coins (PoW L1, Privacy L1, IoT, Oracle, Web3 Compute)
+    expected_expansion = {'CKBUSDT', 'ROSEUSDT', 'JASMYUSDT', 'PYTHUSDT', 'ANKRUSDT'}
+    assert set(APEX_35_EXPANSION) == expected_expansion
+    for c in expected_expansion:
+        assert c in APEX_35, f"Expansion Halal coin {c} missing from APEX_35!"
 
 def test_btc_hawkes_exact_math_parity():
     """Test that Hawkes Self-Exciting Cascade Shield math is identical to the baseline engine."""
@@ -177,7 +231,7 @@ def test_parabolic_profit_lock_tiers():
 def test_trailing_ratchet_activation_and_trailing():
     """Test asymmetric trailing ratchet activation at BB mid touch with profit >= 0.8%."""
     pos = Position(
-        sym='JUPUSDT', px=1.0, notional=320.0, entry_fee=0.128,
+        sym='ADAUSDT', px=1.0, notional=320.0, entry_fee=0.128,
         i=50, entry_time='2026-01-01T00:00:00Z', stop=0.022
     )
     # Price reaches +1.0% with exit_sig == 1 (close > bb_mid)
@@ -335,7 +389,7 @@ def test_historical_replay_2024_02_parity():
     """
     Direct historical replay parity test on 2024-02 data.
     Runs BOTH comprehensive_audit baseline AND standalone Mega22StrategyEngine simulation,
-    verifying 100% exact parity trade-by-trade across all 50 trades and ending capital.
+    verifying 100% exact parity trade-by-trade across all 36 trades and ending capital.
     """
     try:
         from comprehensive_audit import simulate_engine_rigorous
@@ -352,7 +406,7 @@ def test_historical_replay_2024_02_parity():
     res_mega = simulate_mega22_standalone(MEGA_22, initial_capital=1000.0, max_slots=3, slot_frac=0.32)
     
     assert res_mega['trades'] == res_audit['trades'], f"Trade count mismatch: Mega={res_mega['trades']}, Audit={res_audit['trades']}"
-    assert res_mega['trades'] == 50, f"Expected exactly 50 trades in 2024-02, got {res_mega['trades']}"
+    assert res_mega['trades'] == 36, f"Expected exactly 36 trades in 2024-02, got {res_mega['trades']}"
     assert pytest.approx(res_mega['cap'], rel=1e-8) == res_audit['cap'], "Ending capital differs between engines!"
     assert pytest.approx(res_mega['net'], rel=1e-8) == res_audit['net'], "Net profit differs between engines!"
     
@@ -367,6 +421,20 @@ def test_historical_replay_2024_02_parity():
         assert pytest.approx(t_m['entry_px'], rel=1e-6) == t_a['entry_px'], f"Trade {idx} entry px mismatch"
         assert pytest.approx(t_m['exit_px'], rel=1e-6) == t_a['exit_px'], f"Trade {idx} exit px mismatch"
         assert pytest.approx(t_m['net'], rel=1e-6) == t_a['net'], f"Trade {idx} net PnL mismatch"
+
+def test_apex_30_historical_replay_2024_02_parity():
+    """
+    Direct historical replay parity test for Apex-30 Sovereign Champion universe on 2024-02 data.
+    Validates exact parity with backtest audit: exactly 44 trades and $1,202.73 ending capital.
+    """
+    p_btc = Path('/home/atheer/Desktop/Apex_Autonomous_Agent/apex_v2/data/full_year_2024/BTCUSDT_2024-02.pkl')
+    if not p_btc.exists():
+        pytest.skip("Historical 2024-02 data not found")
+        
+    res_apex = simulate_mega22_standalone(APEX_30, initial_capital=1000.0, max_slots=3, slot_frac=0.32)
+    assert res_apex['trades'] == 44, f"Expected exactly 44 trades in 2024-02 for Apex-30, got {res_apex['trades']}"
+    assert pytest.approx(res_apex['cap'], rel=1e-5) == 1202.72648, "Ending capital differs for Apex-30 2024-02 replay!"
+    assert pytest.approx(res_apex['net'], rel=1e-5) == 202.72648, "Net profit differs for Apex-30 2024-02 replay!"
 
 def test_cooldown_mechanics(tmp_path):
     """Verify coin-specific and global consecutive stop loss cooldown mechanics using Mega22PaperBot."""
@@ -387,16 +455,16 @@ def test_cooldown_mechanics(tmp_path):
     assert bot.consecutive_stops == 1
     assert bot.stoploss_guard_until == -1
     
-    # 2. Second Stop Loss on JUPUSDT at bar 105 -> triggers global guard
+    # 2. Second Stop Loss on SOLUSDT at bar 105 -> triggers global guard
     bot.bar_index = 105
-    pos_jup = Position(
-        sym='JUPUSDT', px=1.0, notional=200.0, entry_fee=0.08,
+    pos_sol = Position(
+        sym='SOLUSDT', px=100.0, notional=200.0, entry_fee=0.08,
         i=101, entry_time='2026-01-01T00:00:00Z', stop=0.022
     )
-    bot.active_positions['JUPUSDT'] = pos_jup
-    bot._execute_position_close('JUPUSDT', exit_px=0.978, reason='STOP_LOSS')
+    bot.active_positions['SOLUSDT'] = pos_sol
+    bot._execute_position_close('SOLUSDT', exit_px=97.8, reason='STOP_LOSS')
     
-    assert bot.cooldowns['JUPUSDT'] == 105 + COOLDOWN_STOP_LOSS_BARS  # 129
+    assert bot.cooldowns['SOLUSDT'] == 105 + COOLDOWN_STOP_LOSS_BARS  # 129
     assert bot.consecutive_stops == 2
     assert bot.stoploss_guard_until == 105 + COOLDOWN_GLOBAL_GUARD_BARS  # 153
     

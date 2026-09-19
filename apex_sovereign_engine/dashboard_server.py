@@ -1234,7 +1234,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <button class="tab-btn" data-tab="tab-positions" onclick="switchTab('tab-positions')">🚀 مصفوفة الصفقات النشطة (Active Execution Matrix)</button>
         <button class="tab-btn" data-tab="tab-analytics" onclick="switchTab('tab-analytics')">📊 تحليلات الرصيد وإدارة المخاطر (Equity & Risk Analytics)</button>
         <button class="tab-btn" data-tab="tab-hawkes" onclick="switchTab('tab-hawkes')">🛡️ رادار تقلبات هوكس ومقياس الشدة (Hawkes Volatility Radar)</button>
-        <button class="tab-btn" data-tab="tab-matrix" onclick="switchTab('tab-matrix')">🔬 مصفوفة الألفا للـ 30 عملة (Cross-Sectional Alpha)</button>
+        <button class="tab-btn" data-tab="tab-matrix" onclick="switchTab('tab-matrix')">🔬 مصفوفة الألفا للـ 35 عملة (Cross-Sectional Alpha)</button>
         <button class="tab-btn" data-tab="tab-ledger" onclick="switchTab('tab-ledger')">📜 سجل الصفقات المغلقة (Execution Ledger)</button>
         <button class="tab-btn" data-tab="tab-console" onclick="switchTab('tab-console')">🖥️ سجل الأحداث الحي (Quantitative Console)</button>
     </nav>
@@ -1242,7 +1242,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <!-- TAB 1: Cockpit & Heatmap -->
     <div class="tab-content active" id="tab-cockpit">
         <div class="cockpit-grid">
-            <!-- Left: 30-Coin Real-Time Market Heatmap -->
+            <!-- Left: 35-Coin Real-Time Market Heatmap -->
             <div class="panel">
                 <div class="panel-header">
                     <div class="panel-title">
@@ -1259,7 +1259,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="heatmap-grid" id="heatmap-container">
-                    <!-- Dynamic 30 coin tiles rendered by JS -->
+                    <!-- Dynamic 35 coin tiles rendered by JS -->
                 </div>
             </div>
 
@@ -1412,7 +1412,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="panel">
             <div class="panel-header">
                 <div class="panel-title">
-                    <span>🔬 مصفوفة حساسية الـ 30 عملة لشلالات البيتكوين (Cross-Sectional Shock Transmission)</span>
+                    <span>🔬 مصفوفة حساسية الـ 35 عملة لشلالات البيتكوين (Cross-Sectional Shock Transmission)</span>
                 </div>
                 <span style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">Transfer Entropy + Kyle Impact + OFI</span>
             </div>
@@ -1445,7 +1445,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     <span>🔬 مصفوفة الألفا للـ 35 عملة (Cross-Sectional Alpha & Level-2 Radar)</span>
                 </div>
                 <div class="table-controls">
-                    <input type="text" class="input-search" id="matrix-search" placeholder="بحث بالعملة (مثال: NEAR, JUP)..." oninput="filterAlphaMatrix()">
+                    <input type="text" class="input-search" id="matrix-search" placeholder="بحث بالعملة (مثال: NEAR, ROSE)..." oninput="filterAlphaMatrix()">
                     <select class="input-search" id="matrix-sort" onchange="sortAlphaMatrix()" style="width: 160px;">
                         <option value="score">ترتيب: قوة الألفا ↓</option>
                         <option value="change">ترتيب: تغير 24h ↓</option>
@@ -1977,7 +1977,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
             if (!list) return;
             const cands = (leaderboard || []).filter(x => x.status !== 'POSITION_OPEN').slice(0, 3);
             if (cands.length === 0) {
-                list.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;text-align:center;padding:10px;">المحرك يفحص الـ 30 عملة...</div>';
+                list.innerHTML = '<div style="color:var(--text-muted);font-size:0.75rem;text-align:center;padding:10px;">المحرك يفحص الـ 35 عملة...</div>';
                 return;
             }
             list.innerHTML = cands.map((c, i) => `
@@ -2006,7 +2006,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 <div style="grid-column: 1/-1; text-align: center; padding: 40px 20px; color: var(--text-muted); border: 1px dashed rgba(255,255,255,0.08); border-radius: 10px; background: rgba(255,255,255,0.01);">
                     <div style="font-size: 1.8rem; margin-bottom: 8px;">🔍</div>
                     <div style="font-size: 0.95rem; font-weight: 700; color: #fff;">لا توجد صفقات مفتوحة حالياً</div>
-                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">المحرك يفحص الـ 30 عملة بانتظار استيفاء شروط وايكوف وفيشر مع التحقق من درع هوكس.</div>
+                    <div style="font-size: 0.75rem; color: #64748b; margin-top: 4px;">المحرك يفحص الـ 35 عملة بانتظار استيفاء شروط وايكوف وفيشر مع التحقق من درع هوكس.</div>
                 </div>`;
                 return;
             }

@@ -180,6 +180,8 @@ def test_fastapi_rest_endpoints():
     assert "leaderboard" in d
     assert "tickers" in d
     assert "is_paused" in d
+    assert "apex_35" in d
+    assert "apex_35_expansion" in d
 
     # GET /api/tickers
     res = client.get("/api/tickers")
@@ -189,6 +191,7 @@ def test_fastapi_rest_endpoints():
     assert any(t.get("group") == "GOLDEN_11" for t in tickers_dict.values())
     assert any(t.get("group") == "TITAN_11" for t in tickers_dict.values())
     assert any(t.get("group") == "APEX_ALPHA" for t in tickers_dict.values())
+    assert any(t.get("group") == "APEX_35" for t in tickers_dict.values())
 
     # GET /api/hawkes
     res_hawkes = client.get("/api/hawkes")

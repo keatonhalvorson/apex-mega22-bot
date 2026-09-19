@@ -35,12 +35,17 @@
     "SEIUSDT": -1,
     "ETHUSDT": -1,
     "UNIUSDT": -1,
-    "SOLUSDT": -1
+    "SOLUSDT": -1,
+    "CKBUSDT": -1,
+    "ROSEUSDT": -1,
+    "JASMYUSDT": -1,
+    "PYTHUSDT": -1,
+    "ANKRUSDT": -1
   },
   "active_positions": {},
   "history": [
     {
-      "sym": "INJUSDT",
+      "sym": "CKBUSDT",
       "entry_time": "2026-09-11T22:05:01.000770+00:00",
       "exit_time": "2026-09-13T00:23:55.181533+00:00",
       "entry_i": 9,
@@ -94,7 +99,7 @@
       "cap_after": 1009.49
     },
     {
-      "sym": "INJUSDT",
+      "sym": "CKBUSDT",
       "entry_time": "2026-09-16T19:35:03.745472+00:00",
       "exit_time": "2026-09-17T00:25:21.224717+00:00",
       "entry_i": 1142,

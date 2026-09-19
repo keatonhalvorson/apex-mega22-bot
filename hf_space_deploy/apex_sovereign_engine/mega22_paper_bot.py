@@ -335,7 +335,7 @@ class Mega22PaperBot:
 
     async def bootstrap_historical_klines(self):
         """
-        Concurrently fetches initial 300 5m bars for all pairs (ALL_SYMBOLS: BTC + 30 Altcoins) via async REST in ~1s.
+        Concurrently fetches initial 300 5m bars for all pairs (ALL_SYMBOLS: BTC + 35 Altcoins, 36 total) via async REST in ~1s.
         Ensures rolling indicators have full warm-up immediately upon launch.
         """
         self.log_event("📡 Initializing High-Speed Market Bootstrap (300 bars per pair)...")
@@ -824,7 +824,7 @@ class Mega22PaperBot:
 
     def _evaluate_portfolio_entries(self):
         """
-        Evaluates top-ranked candidates across all 22 coins and executes entries.
+        Evaluates top-ranked candidates across the active 35-coin universe and executes entries.
         Matches exact logic of simulate_engine_rigorous lines 187-208.
         """
         if self.is_paused:
