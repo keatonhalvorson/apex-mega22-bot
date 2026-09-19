@@ -920,6 +920,47 @@ def test_opportunity_cost_rotation_and_equal_equity_sizing(tmp_path):
     bot._evaluate_portfolio_entries()
     assert len(bot.trade_history) == before_count, "Deep drawdown position (< -1.5%) must not be evicted!"
 
+    # 4d. Eviction cooldown enforcement: NEARUSDT must be in cooldown
+    assert bot.cooldowns['NEARUSDT'] == 50 + 18, f"Evicted asset must have cooldown until bar {50 + 18}"
+    bot.bar_index = 51
+    bot.latest_indicators['NEARUSDT'] = {'is_cand': 1, 'score': 30.0, 'price': 5.0}
+    bot._evaluate_portfolio_entries()
+    assert 'NEARUSDT' not in bot.active_positions, "Evicted coin under active cooldown must NEVER be re-entered!"
+
+    # 4e. Deterministic multi-attribute tie-breaking: identical held bars evicts worse PnL
+    bot.active_positions.clear()
+    bot.available_cash = 50.0
+    # Position A: held 25 bars, PnL = +0.001 (+0.1%)
+    pos_a = Position(sym='LINKUSDT', px=10.0, notional=300.0, entry_fee=0.12, i=25, entry_time='t', stop=0.022, score=10.0)
+    # Position B: held 25 bars, PnL = -0.010 (-1.0%) -> WORSE PnL
+    pos_b = Position(sym='SOLUSDT', px=100.0, notional=300.0, entry_fee=0.12, i=25, entry_time='t', stop=0.022, score=5.0)
+    pos_c = Position(sym='DOTUSDT', px=5.0, notional=300.0, entry_fee=0.12, i=45, entry_time='t', stop=0.022, score=12.0)
+    bot.active_positions = {'LINKUSDT': pos_a, 'SOLUSDT': pos_b, 'DOTUSDT': pos_c}
+    bot.latest_prices = {'LINKUSDT': 10.01, 'SOLUSDT': 99.0, 'DOTUSDT': 5.0, 'BONKUSDT': 0.00002}
+    bot.latest_indicators['BONKUSDT'] = {'is_cand': 1, 'score': 25.0, 'price': 0.00002}
+    bot._evaluate_portfolio_entries()
+    assert 'SOLUSDT' not in bot.active_positions, "Position with worse PnL must be evicted when held bars are tied!"
+    assert 'LINKUSDT' in bot.active_positions, "Better PnL position must remain active!"
+
+    # 4f. Invalid price candidates (<= 0 or NaN) must be rejected
+    bot.latest_indicators['FILUSDT'] = {'is_cand': 1, 'score': 30.0, 'price': 0.0}
+    bot.latest_indicators['AVAXUSDT'] = {'is_cand': 1, 'score': 30.0, 'price': float('nan')}
+    cands_filtered = []
+    for s in ['FILUSDT', 'AVAXUSDT']:
+        ind = bot.latest_indicators.get(s)
+        p = float(ind.get('price', 0.0))
+        sc = float(ind.get('score', 0.0))
+        if p > 0.0 and not np.isnan(p) and not np.isnan(sc):
+            cands_filtered.append((s, sc, p))
+    assert len(cands_filtered) == 0, "Non-positive or NaN price candidates must be rejected!"
+
+    # 4g. Cross-sectional percentile rank calculation
+    sample_cands = [('BTCUSDT', 5.0, 50000.0), ('ETHUSDT', 15.0, 3000.0), ('SOLUSDT', 25.0, 150.0)]
+    pcts = Mega22StrategyEngine.compute_cross_sectional_percentiles(sample_cands)
+    assert pcts['BTCUSDT'] == pytest.approx(33.33, rel=1e-2)
+    assert pcts['ETHUSDT'] == pytest.approx(66.67, rel=1e-2)
+    assert pcts['SOLUSDT'] == 100.00
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

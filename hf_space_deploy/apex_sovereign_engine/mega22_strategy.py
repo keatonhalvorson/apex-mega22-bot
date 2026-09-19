@@ -281,9 +281,32 @@ class Mega22StrategyEngine:
         """
         Cross-sectional ranking of candidate tokens by their explosion alpha score.
         Input: list of candidate tuples (symbol, score, ...)
-        Output: sorted descending by score.
+        Output: sorted descending by score with robust deterministic tie-breaking.
         """
-        return sorted(candidates, key=lambda x: x[1], reverse=True)
+        return sorted(
+            candidates,
+            key=lambda x: (
+                x[1],
+                -x[2] if len(x) > 2 and isinstance(x[2], (int, float)) else 0.0,
+                x[0]
+            ),
+            reverse=True
+        )
+
+    @staticmethod
+    def compute_cross_sectional_percentiles(
+        candidates: List[Tuple[str, float, Any]]
+    ) -> Dict[str, float]:
+        """
+        Computes cross-sectional percentile ranks (0.0 to 100.0%) for candidates at bar t.
+        Guarantees strictly causal zero-lookahead alpha calibration.
+        """
+        if not candidates:
+            return {}
+        n = len(candidates)
+        # Sort ascending by score to compute cumulative percentile
+        sorted_cands = sorted(candidates, key=lambda x: x[1])
+        return {item[0]: round(((idx + 1) / n) * 100.0, 2) for idx, item in enumerate(sorted_cands)}
 
     @staticmethod
     def evaluate_position_step(

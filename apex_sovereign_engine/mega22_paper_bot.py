@@ -769,6 +769,10 @@ class Mega22PaperBot:
             if self.consecutive_stops >= CONSECUTIVE_STOPS_TRIGGER:
                 self.stoploss_guard_until = self.bar_index + COOLDOWN_GLOBAL_GUARD_BARS
                 self.log_event(f"🛡️ Risk Circuit Tripped: 2 consecutive stops! Global pause until bar {self.stoploss_guard_until}.", "WARNING")
+        elif 'ROTATION' in reason:
+            self.consecutive_stops = 0
+            self.cooldowns[symbol] = self.bar_index + ROTATION_HELD_BARS
+            self.log_event(f"⏳ Cooldown active for evicted {symbol} until bar {self.cooldowns[symbol]}.", "INFO")
         else:
             self.consecutive_stops = 0
             
@@ -846,7 +850,10 @@ class Mega22PaperBot:
                 continue
             ind = self.latest_indicators.get(sym)
             if ind and ind.get('is_cand') == 1:
-                cands.append((sym, float(ind['score']), float(ind['price'])))
+                price = float(ind.get('price', 0.0))
+                score = float(ind.get('score', 0.0))
+                if price > 0.0 and not np.isnan(price) and not np.isnan(score):
+                    cands.append((sym, score, price))
 
         # Cross-sectional ranking by Explosion Alpha Score descending
         cands = Mega22StrategyEngine.rank_cross_sectional_candidates(cands)
@@ -870,8 +877,8 @@ class Mega22PaperBot:
                         (top_cand_score - pos_score) >= ROTATION_SCORE_EDGE):
                         evictable.append((sym, held, pnl, pos_score))
                 if evictable:
-                    # Evict longest-held stagnant position first
-                    evictable.sort(key=lambda x: -x[1])
+                    # Evict longest-held stagnant position first, tie-break on worse PnL and lower alpha score
+                    evictable.sort(key=lambda x: (-x[1], x[2], x[3]))
                     sym_evict = evictable[0][0]
                     curr_px = self.latest_prices.get(sym_evict, self.active_positions[sym_evict].px)
                     exit_px = curr_px * (1.0 - SLIPPAGE_RATE)
@@ -896,7 +903,7 @@ class Mega22PaperBot:
             if self.available_cash >= target_notional and target_notional > 50.0:
                 epx = raw_px * (1.0 + SLIPPAGE_RATE)
                 ef = target_notional * FEE_RATE
-                self.available_cash -= (target_notional + ef)
+                self.available_cash = max(0.0, round(self.available_cash - (target_notional + ef), 6))
 
                 pos = Position(
                     sym=sym,
