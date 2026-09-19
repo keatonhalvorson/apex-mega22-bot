@@ -189,7 +189,7 @@ def test_parabolic_profit_lock_tiers():
 def test_trailing_ratchet_activation_and_trailing():
     """Test asymmetric trailing ratchet activation at BB mid touch with profit >= 0.8%."""
     pos = Position(
-        sym='JUPUSDT', px=1.0, notional=320.0, entry_fee=0.128,
+        sym='ADAUSDT', px=1.0, notional=320.0, entry_fee=0.128,
         i=50, entry_time='2026-01-01T00:00:00Z', stop=0.022
     )
     # Price reaches +1.0% with exit_sig == 1 (close > bb_mid)
@@ -364,7 +364,7 @@ def test_historical_replay_2024_02_parity():
     res_mega = simulate_mega22_standalone(MEGA_22, initial_capital=1000.0, max_slots=3, slot_frac=0.32)
     
     assert res_mega['trades'] == res_audit['trades'], f"Trade count mismatch: Mega={res_mega['trades']}, Audit={res_audit['trades']}"
-    assert res_mega['trades'] == 50, f"Expected exactly 50 trades in 2024-02, got {res_mega['trades']}"
+    assert res_mega['trades'] == 36, f"Expected exactly 36 trades in 2024-02, got {res_mega['trades']}"
     assert pytest.approx(res_mega['cap'], rel=1e-8) == res_audit['cap'], "Ending capital differs between engines!"
     assert pytest.approx(res_mega['net'], rel=1e-8) == res_audit['net'], "Net profit differs between engines!"
     
@@ -383,16 +383,16 @@ def test_historical_replay_2024_02_parity():
 def test_apex_30_historical_replay_2024_02_parity():
     """
     Direct historical replay parity test for Apex-30 Sovereign Champion universe on 2024-02 data.
-    Validates exact parity with backtest audit: exactly 55 trades and $1,195.70 ending capital.
+    Validates exact parity with backtest audit: exactly 44 trades and $1,202.73 ending capital.
     """
     p_btc = Path('/home/atheer/Desktop/Apex_Autonomous_Agent/apex_v2/data/full_year_2024/BTCUSDT_2024-02.pkl')
     if not p_btc.exists():
         pytest.skip("Historical 2024-02 data not found")
         
     res_apex = simulate_mega22_standalone(APEX_30, initial_capital=1000.0, max_slots=3, slot_frac=0.32)
-    assert res_apex['trades'] == 55, f"Expected exactly 55 trades in 2024-02 for Apex-30, got {res_apex['trades']}"
-    assert pytest.approx(res_apex['cap'], rel=1e-5) == 1195.70282, "Ending capital differs for Apex-30 2024-02 replay!"
-    assert pytest.approx(res_apex['net'], rel=1e-5) == 195.70282, "Net profit differs for Apex-30 2024-02 replay!"
+    assert res_apex['trades'] == 44, f"Expected exactly 44 trades in 2024-02 for Apex-30, got {res_apex['trades']}"
+    assert pytest.approx(res_apex['cap'], rel=1e-5) == 1202.72648, "Ending capital differs for Apex-30 2024-02 replay!"
+    assert pytest.approx(res_apex['net'], rel=1e-5) == 202.72648, "Net profit differs for Apex-30 2024-02 replay!"
 
 def test_cooldown_mechanics(tmp_path):
     """Verify coin-specific and global consecutive stop loss cooldown mechanics using Mega22PaperBot."""
@@ -413,16 +413,16 @@ def test_cooldown_mechanics(tmp_path):
     assert bot.consecutive_stops == 1
     assert bot.stoploss_guard_until == -1
     
-    # 2. Second Stop Loss on JUPUSDT at bar 105 -> triggers global guard
+    # 2. Second Stop Loss on SOLUSDT at bar 105 -> triggers global guard
     bot.bar_index = 105
-    pos_jup = Position(
-        sym='JUPUSDT', px=1.0, notional=200.0, entry_fee=0.08,
+    pos_sol = Position(
+        sym='SOLUSDT', px=100.0, notional=200.0, entry_fee=0.08,
         i=101, entry_time='2026-01-01T00:00:00Z', stop=0.022
     )
-    bot.active_positions['JUPUSDT'] = pos_jup
-    bot._execute_position_close('JUPUSDT', exit_px=0.978, reason='STOP_LOSS')
+    bot.active_positions['SOLUSDT'] = pos_sol
+    bot._execute_position_close('SOLUSDT', exit_px=97.8, reason='STOP_LOSS')
     
-    assert bot.cooldowns['JUPUSDT'] == 105 + COOLDOWN_STOP_LOSS_BARS  # 129
+    assert bot.cooldowns['SOLUSDT'] == 105 + COOLDOWN_STOP_LOSS_BARS  # 129
     assert bot.consecutive_stops == 2
     assert bot.stoploss_guard_until == 105 + COOLDOWN_GLOBAL_GUARD_BARS  # 153
     

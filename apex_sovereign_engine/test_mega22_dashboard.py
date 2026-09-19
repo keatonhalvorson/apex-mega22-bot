@@ -66,20 +66,20 @@ def test_live_floating_pnl_on_tick(tmp_path):
     bot = Mega22PaperBot(journal_path=journal)
     
     pos = Position(
-        sym="JUPUSDT", px=1.0000, notional=300.0, entry_fee=0.12,
+        sym="ADAUSDT", px=1.0000, notional=300.0, entry_fee=0.12,
         i=10, entry_time="2026-01-01T00:00:00Z", stop=0.022,
         highest_seen=1.0000, lowest_seen=1.0000, current_px=1.0000
     )
-    bot.active_positions["JUPUSDT"] = pos
+    bot.active_positions["ADAUSDT"] = pos
 
     # Tick +3% higher, with rolling 24h extremes (h=1.050, l=0.950)
     # Crucial: l=0.950 is below stop-loss (0.978), but must NOT trigger false STOP_LOSS because it is 24h rolling low!
-    bot.on_ticker_update("JUPUSDT", {
+    bot.on_ticker_update("ADAUSDT", {
         "c": "1.0300", "p": "0.03", "P": "3.00", "h": "1.050", "l": "0.950",
         "v": "50000", "q": "51500", "b": "1.029", "a": "1.031"
     })
     
-    assert "JUPUSDT" in bot.active_positions, "Position must NOT be liquidated by 24h rolling low!"
+    assert "ADAUSDT" in bot.active_positions, "Position must NOT be liquidated by 24h rolling low!"
     assert pos.current_px == 1.0300
     assert pos.highest_seen == 1.0300
     assert pytest.approx(pos.unrealized_pnl, rel=1e-6) == 9.00  # (1.03 - 1.00) * 300
@@ -142,7 +142,7 @@ def test_quantitative_summary_stats(tmp_path):
         entry_fee=0.12, exit_fee=0.12, reason="STOP_LOSS", bars_held=4, cap_after=1012.42
     )
     t3 = TradeRecord(
-        sym="JUPUSDT", entry_time="t3", exit_time="t4", entry_i=30, exit_i=42,
+        sym="ADAUSDT", entry_time="t3", exit_time="t4", entry_i=30, exit_i=42,
         entry_px=1.0, exit_px=1.035, pnl_pct=3.5, notional=300.0, gross=10.5, net=10.26,
         entry_fee=0.12, exit_fee=0.12, reason="TRAILING_LOCK", bars_held=12, cap_after=1022.68
     )

@@ -157,7 +157,8 @@ class Mega22PaperBot:
             self.bar_index = int(data.get("bar_index", 0))
             self.consecutive_stops = int(data.get("consecutive_stops", 0))
             self.stoploss_guard_until = int(data.get("stoploss_guard_until", -1))
-            self.cooldowns = data.get("cooldowns", {s: -1 for s in ACTIVE_UNIVERSE})
+            raw_cd = data.get("cooldowns", {})
+            self.cooldowns = {s: int(raw_cd.get(s, -1)) for s in ACTIVE_UNIVERSE}
             
             raw_pos = data.get("active_positions", {})
             self.active_positions = {}
