@@ -1,6 +1,6 @@
 """
 ====================================================================================================
-      🌌 APEX SOVEREIGN QUANTITATIVE ENGINE — INSTITUTIONAL MEGA-22 COCKPIT
+      🌌 APEX SOVEREIGN QUANTITATIVE ENGINE — INSTITUTIONAL APEX-30 COCKPIT (100% HALAL SPOT)
       
       High-performance FastAPI Server with Sub-Second Live WebSocket Streaming.
       Aesthetic: Bloomberg Terminal / Citadel / Jane Street Quantitative Cockpit.
@@ -62,7 +62,7 @@ bot.add_listener(websocket_event_handler)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Launch the paper trading bot event loop in the background on startup, clean up on shutdown."""
-    logger.info("Starting Mega-22 Sovereign Paper Trading Bot in background task...")
+    logger.info("Starting Apex-30 Sovereign Paper Trading Bot in background task...")
     bot_task = asyncio.create_task(bot.run())
     bcast_task = asyncio.create_task(periodic_state_broadcast())
     yield
@@ -1257,7 +1257,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="heatmap-grid" id="heatmap-container">
-                    <!-- Dynamic 22 coin tiles rendered by JS -->
+                    <!-- Dynamic 30 coin tiles rendered by JS -->
                 </div>
             </div>
 
@@ -2752,13 +2752,13 @@ async def get_dashboard():
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="Mega-22 Dashboard Server")
+    parser = argparse.ArgumentParser(description="Apex-30 Dashboard Server")
     default_port = int(os.environ.get("PORT", 8080))
     parser.add_argument("--port", type=int, default=default_port, help=f"Port to bind (default: {default_port})")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host interface (default: 0.0.0.0)")
     args = parser.parse_args()
     
-    logger.info(f"🚀 Starting Mega-22 Dashboard on http://{args.host}:{args.port}")
+    logger.info(f"🚀 Starting Apex-30 Dashboard on http://{args.host}:{args.port}")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 
 if __name__ == "__main__":

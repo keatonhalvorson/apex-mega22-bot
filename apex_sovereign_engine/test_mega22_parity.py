@@ -37,7 +37,7 @@ def test_mega_22_universe_composition():
     assert MACRO_SYMBOL == 'BTCUSDT'
 
 def test_apex_30_universe_composition():
-    """Verify that Sovereign Apex-30 properly encompasses Mega-22 and the 8 high-alpha champion altcoins."""
+    """Verify that Sovereign Apex-30 properly encompasses Mega-22 and the 8 high-alpha champion altcoins (100% Halal Spot)."""
     assert len(APEX_30) == 30
     assert set(MEGA_22).issubset(set(APEX_30))
     assert len(APEX_ADDITIONS) == 8
@@ -46,6 +46,29 @@ def test_apex_30_universe_composition():
     assert ACTIVE_UNIVERSE == APEX_30
     assert ALL_SYMBOLS == [MACRO_SYMBOL] + ACTIVE_UNIVERSE
     assert len(ALL_SYMBOLS) == 31
+
+    # Verify complete exclusion of doubtful / non-halal coins
+    doubtful_5 = {'ENAUSDT', 'PENDLEUSDT', 'CRVUSDT', 'JUPUSDT', 'INJUSDT'}
+    assert not any(c in APEX_30 for c in doubtful_5), f"Found doubtful coins in APEX_30: {doubtful_5.intersection(set(APEX_30))}"
+    assert not any(c in MEGA_22 for c in doubtful_5), f"Found doubtful coins in MEGA_22: {doubtful_5.intersection(set(MEGA_22))}"
+
+    # Verify inclusion of all 25 confirmed Halal baseline coins
+    confirmed_25 = [
+        'ORDIUSDT', 'ICPUSDT', 'GALAUSDT', 'NEARUSDT', 'TIAUSDT',
+        'RENDERUSDT', 'ALGOUSDT', 'XLMUSDT', 'DOGEUSDT', 'TRXUSDT',
+        'BONKUSDT', 'POLUSDT', 'HBARUSDT', 'FILUSDT', 'APTUSDT',
+        'XRPUSDT', 'ENSUSDT', 'FETUSDT', 'VETUSDT', 'AVAXUSDT',
+        'SEIUSDT', 'OPUSDT', 'DOTUSDT', 'ETHUSDT', 'UNIUSDT'
+    ]
+    for c in confirmed_25:
+        assert c in APEX_30, f"Confirmed Halal coin {c} missing from APEX_30!"
+
+    # Verify inclusion of the 5 optimal Halal replacement coins
+    replacements_5 = {'ADAUSDT', 'LINKUSDT', 'LTCUSDT', 'ATOMUSDT', 'SOLUSDT'}
+    for c in replacements_5:
+        assert c in APEX_30, f"Replacement Halal coin {c} missing from APEX_30!"
+
+    assert set(APEX_30) == set(confirmed_25).union(replacements_5)
 
 def test_btc_hawkes_exact_math_parity():
     """Test that Hawkes Self-Exciting Cascade Shield math is identical to the baseline engine."""
@@ -347,7 +370,7 @@ def test_historical_replay_2024_02_parity():
     """
     Direct historical replay parity test on 2024-02 data.
     Runs BOTH comprehensive_audit baseline AND standalone Mega22StrategyEngine simulation,
-    verifying 100% exact parity trade-by-trade across all 50 trades and ending capital.
+    verifying 100% exact parity trade-by-trade across all 36 trades and ending capital.
     """
     try:
         from comprehensive_audit import simulate_engine_rigorous

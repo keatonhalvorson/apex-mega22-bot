@@ -27,7 +27,7 @@ DATA_2025_DIR = Path("/home/atheer/Desktop/Apex_Autonomous_Agent/apex_v2/data/fu
 EXPANDED_UNIVERSE = [
     "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", 
     "ADAUSDT", "AVAXUSDT", "NEARUSDT", "APTUSDT", "RENDERUSDT",
-    "LINKUSDT", "LTCUSDT", "UNIUSDT", "SUIUSDT", "INJUSDT"
+    "LINKUSDT", "LTCUSDT", "UNIUSDT", "SUIUSDT", "ATOMUSDT"
 ]
 
 MONTHS_2025 = [f"2025-{m:02d}" for m in range(1, 13)]

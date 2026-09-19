@@ -48,7 +48,7 @@ def get_all_active_spot_symbols() -> list:
         return symbols
     except Exception as e:
         logger.warning(f"Error fetching exchange info: {e}")
-        return ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT", "APTUSDT", "RENDERUSDT", "LINKUSDT", "INJUSDT", "SUIUSDT", "TIAUSDT", "SEIUSDT", "ARBUSDT", "OPUSDT", "FILUSDT", "DOTUSDT", "FETUSDT", "AAVEUSDT"]
+        return ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "NEARUSDT", "APTUSDT", "RENDERUSDT", "LINKUSDT", "LTCUSDT", "SUIUSDT", "TIAUSDT", "SEIUSDT", "ARBUSDT", "OPUSDT", "FILUSDT", "DOTUSDT", "FETUSDT", "ATOMUSDT"]
 
 def fetch_klines_1m(symbol: str, limit: int = 200) -> pd.DataFrame:
     url = f"{BASE_URL}/api/v3/klines"
