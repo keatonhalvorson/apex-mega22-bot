@@ -28,10 +28,12 @@ from mega22_constants import (
     INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET, STALL_BARS_THRESHOLD,
+    ENABLE_STAGNATION_TIME_DECAY, STAGNATION_DECAY_BARS, STAGNATION_DECAY_STOP,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS,
     BUFFER_MAX_BARS, BTC_HAWKES_MAX_INTENSITY, BTC_24H_MIN_PCT, BTC_4H_MIN_PCT,
     ENABLE_OPPORTUNITY_ROTATION, ROTATION_MIN_SCORE, ROTATION_HELD_BARS,
-    ROTATION_MAX_PNL, ROTATION_MIN_PNL, ROTATION_SCORE_EDGE
+    ROTATION_FAST_HELD_BARS, ROTATION_MAX_PNL, ROTATION_MIN_PNL, ROTATION_SCORE_EDGE,
+    ENABLE_KINETIC_EVICTION, KINETIC_VELOCITY_WINDOW, KINETIC_ACCEL_WINDOW
 )
 from mega22_strategy import Mega22StrategyEngine, Position, TradeRecord
 
@@ -663,6 +665,11 @@ class Mega22PaperBot:
         
         # Check active position exit on closed candle
         if symbol in self.active_positions:
+            pos = self.active_positions[symbol]
+            pos.recent_prices.append(bar_data['close'])
+            if len(pos.recent_prices) > 60:
+                pos.recent_prices = pos.recent_prices[-60:]
+
             df_s = self._df_from_buffer(symbol)
             if df_s is not None and len(df_s) >= 5:
                 typical_px = (df_s['high'] + df_s['low'] + df_s['close']) / 3.0
@@ -671,7 +678,6 @@ class Mega22PaperBot:
             else:
                 exit_sig = 0
                 
-            pos = self.active_positions[symbol]
             prev_stop = pos.stop
             event, updated_pos = Mega22StrategyEngine.evaluate_position_step(
                 pos=pos,
@@ -863,37 +869,31 @@ class Mega22PaperBot:
         # Cross-sectional ranking by Explosion Alpha Score descending
         cands = Mega22StrategyEngine.rank_cross_sectional_candidates(cands)
 
-        # Smart Opportunity-Cost Rotation:
+        # Smart Opportunity-Cost Rotation with Kinetic Momentum Deceleration Filter:
         # If at max capacity and a high-conviction candidate emerges (score >= ROTATION_MIN_SCORE),
-        # check if any active position is stagnant (held >= ROTATION_HELD_BARS, ROTATION_MIN_PNL <= PnL <= ROTATION_MAX_PNL, stop > 0)
-        # and candidate holds score advantage >= ROTATION_SCORE_EDGE (or ROTATION_SCORE_EDGE <= 0.0).
+        # evict stagnant position (held >= ROTATION_FAST_HELD_BARS with negative kinetic acceleration d^2P/dt^2 <= 0,
+        # or held >= ROTATION_HELD_BARS standard).
         if ENABLE_OPPORTUNITY_ROTATION and len(self.active_positions) >= MAX_SLOTS and len(cands) > 0:
-            top_cand_sym, top_cand_score, _ = cands[0]
-            if top_cand_score >= ROTATION_MIN_SCORE:
-                evictable = []
-                for sym, pos in self.active_positions.items():
-                    held = self.bar_index - pos.i
-                    curr_px = self.latest_prices.get(sym, pos.px)
-                    pnl = (curr_px - pos.px) / pos.px
-                    pos_score = getattr(pos, 'score', 0.0)
-                    if (held >= ROTATION_HELD_BARS and
-                        ROTATION_MIN_PNL <= pnl <= ROTATION_MAX_PNL and
-                        pos.stop > 0 and
-                        (ROTATION_SCORE_EDGE <= 0.0 or (top_cand_score - pos_score) >= ROTATION_SCORE_EDGE)):
-                        evictable.append((sym, held, pnl, pos_score))
-
-                if evictable:
-                    # Evict longest-held stagnant position first, tie-break on worse PnL and lower alpha score
-                    evictable.sort(key=lambda x: (-x[1], x[2], x[3]))
-                    sym_evict = evictable[0][0]
-                    curr_px = self.latest_prices.get(sym_evict, self.active_positions[sym_evict].px)
-                    exit_px = curr_px * (1.0 - SLIPPAGE_RATE)
-                    self.log_event(
-                        f"🔄 ROTATION EVICTION: Evicting stagnant {sym_evict} (held {evictable[0][1]} bars, PnL: {evictable[0][2]*100:+.2f}%) "
-                        f"for high-alpha candidate {top_cand_sym} (Score: {top_cand_score:.1f} vs {evictable[0][3]:.1f})",
-                        "INFO"
-                    )
-                    self._execute_position_close(sym_evict, exit_px, "ROTATION_EVICT")
+            histories = {s: p.recent_prices for s, p in self.active_positions.items()}
+            evict_res = Mega22StrategyEngine.select_rotation_eviction(
+                active_positions=self.active_positions,
+                cands=cands,
+                current_prices=self.latest_prices,
+                bar_index=self.bar_index,
+                price_histories=histories
+            )
+            if evict_res:
+                sym_evict, reason, exit_px = evict_res
+                pos = self.active_positions[sym_evict]
+                held = self.bar_index - pos.i
+                pnl = (exit_px - pos.px) / pos.px
+                top_cand_sym, top_cand_score, _ = cands[0]
+                self.log_event(
+                    f"🔄 {reason}: Evicting stagnant {sym_evict} (held {held} bars, PnL: {pnl*100:+.2f}%) "
+                    f"for high-alpha candidate {top_cand_sym} (Score: {top_cand_score:.1f} vs {pos.score:.1f})",
+                    "INFO"
+                )
+                self._execute_position_close(sym_evict, exit_px, reason)
 
         if len(self.active_positions) >= MAX_SLOTS:
             return
@@ -902,7 +902,7 @@ class Mega22PaperBot:
         valid_cands = [c for c in cands if c[0] not in self.active_positions]
 
         for sym, score, raw_px in valid_cands[:avail_slots]:
-            # Institutional Equal-Equity Slot Sizing: allocates 32% of current portfolio total equity
+            # Institutional Equal-Equity Slot Sizing: allocates 33.3% of current portfolio total equity
             total_equity = self.available_cash + sum(p.notional for p in self.active_positions.values())
             target_notional = min(total_equity * SLOT_FRACTION, self.available_cash / (1.0 + FEE_RATE))
 
@@ -922,7 +922,8 @@ class Mega22PaperBot:
                     highest_seen=epx,
                     lowest_seen=epx,
                     current_px=epx,
-                    score=score
+                    score=score,
+                    recent_prices=[raw_px, epx]
                 )
                 self.active_positions[sym] = pos
                 self.log_event(

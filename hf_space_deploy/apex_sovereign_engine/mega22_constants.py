@@ -100,13 +100,24 @@ STALL_BARS_THRESHOLD = 60        # 60 bars (5 hours)
 STALL_MAX_PNL = 0.001           # PnL < +0.1%
 STALL_WORST_MIN_PNL = -0.010    # worst PnL dipped below -1.0%
 
+# Dynamic Stagnation Time-Decay Trailing Stop
+ENABLE_STAGNATION_TIME_DECAY = True
+STAGNATION_DECAY_BARS = 36       # 36 bars (3 hours) with no upward progress
+STAGNATION_DECAY_STOP = 0.015    # Dynamically tighten stop from -2.2% to -1.5%
+
 # Smart Opportunity-Cost Rotation Parameters (Institutional Active Alpha Rotation)
 ENABLE_OPPORTUNITY_ROTATION = True
 ROTATION_MIN_SCORE = 5.0        # Candidate explosion alpha score threshold
-ROTATION_HELD_BARS = 18         # Minimum holding period (1.5 hours) before eviction eligibility
+ROTATION_HELD_BARS = 18         # Standard minimum holding period (1.5 hours) before eviction eligibility
+ROTATION_FAST_HELD_BARS = 12    # Accelerated 12-bar (1 hour) eviction when kinetic deceleration (d^2P/dt^2 <= 0) is verified
 ROTATION_MAX_PNL = 0.003        # Evict stagnant positions with PnL <= +0.3%
 ROTATION_MIN_PNL = -0.015       # Don't evict positions in deep drawdown (PnL < -1.5%), let stop loss protect
 ROTATION_SCORE_EDGE = 0.0       # Minimum score advantage candidate must hold over position
+
+# Kinetic Momentum & Acceleration Stagnation Filter (Velocity Slope & d^2P/dt^2 <= 0)
+ENABLE_KINETIC_EVICTION = True
+KINETIC_VELOCITY_WINDOW = 6     # 6 bars (30 min) for velocity slope dP/dt
+KINETIC_ACCEL_WINDOW = 6        # 6 bars (30 min) for second-derivative acceleration d^2P/dt^2
 
 
 # Risk Cooldown Durations (in 5-minute bars)

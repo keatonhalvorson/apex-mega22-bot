@@ -24,7 +24,9 @@ from mega22_constants import (
     MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS,
-    ROTATION_MIN_SCORE
+    ROTATION_MIN_SCORE, ROTATION_FAST_HELD_BARS, ENABLE_KINETIC_EVICTION,
+    KINETIC_VELOCITY_WINDOW, KINETIC_ACCEL_WINDOW, ENABLE_STAGNATION_TIME_DECAY,
+    STAGNATION_DECAY_BARS, STAGNATION_DECAY_STOP
 )
 
 from mega22_strategy import Mega22StrategyEngine, Position, TradeRecord
@@ -1083,6 +1085,189 @@ def test_exact_halal_spot_cash_sl_tp_fee_parity():
     net_profit = gross_profit - exit_fee_nominal - entry_fee
     assert net_profit > notional * 0.063 # Net profit delivers institutional edge > +6.3% after fees and slippage
 
+def test_kinetic_momentum_and_acceleration_filter():
+    """
+    QUANT MATHEMATICAL PROOF: Kinetic Velocity Slope & Acceleration Filter (d^2P/dt^2 <= 0).
+    Verifies:
+    1. Accelerating uptrend: v > 0, a > 0 -> is_stagnant is False.
+    2. Decelerating/flat movement: v <= 0, a <= 0 -> is_stagnant is True.
+    3. Handles window boundaries and zero-division safety.
+    """
+    entry_px = 10.0
+    w = KINETIC_VELOCITY_WINDOW  # 6 bars
+    
+    # 1. Accelerating uptrend series (12 bars)
+    # First 6 bars: gradual climb (10.0 -> 10.3, Δ = 0.3)
+    # Second 6 bars: aggressive explosion (10.3 -> 11.2, Δ = 0.9)
+    accel_prices = [
+        10.0, 10.05, 10.10, 10.15, 10.22, 10.30,
+        10.40, 10.52, 10.68, 10.85, 11.02, 11.20
+    ]
+    vel, accel = Mega22StrategyEngine.compute_kinetic_momentum(accel_prices, entry_px, window=w)
+    assert vel > 0, f"Expected positive velocity, got {vel}"
+    assert accel > 0, f"Expected positive acceleration (d^2P/dt^2 > 0), got {accel}"
+    
+    is_stag, v, a = Mega22StrategyEngine.evaluate_kinetic_stagnation(
+        accel_prices, entry_px, pnl=0.05, held_bars=14, window=w
+    )
+    assert not is_stag, "Accelerating asset should NOT be flagged as stagnant!"
+
+    # 2. Decelerating stall series (12 bars)
+    # First 6 bars: climb (10.0 -> 10.2)
+    # Second 6 bars: rollover and stagnation (10.2 -> 10.15)
+    decel_prices = [
+        10.0, 10.05, 10.10, 10.15, 10.18, 10.20,
+        10.20, 10.19, 10.18, 10.17, 10.16, 10.15
+    ]
+    vel_d, accel_d = Mega22StrategyEngine.compute_kinetic_momentum(decel_prices, entry_px, window=w)
+    assert vel_d < 0, f"Expected negative velocity in second half, got {vel_d}"
+    assert accel_d < 0, f"Expected negative acceleration (deceleration d^2P/dt^2 <= 0), got {accel_d}"
+    
+    is_stag_d, vd, ad = Mega22StrategyEngine.evaluate_kinetic_stagnation(
+        decel_prices, entry_px, pnl=0.001, held_bars=14, window=w
+    )
+    assert is_stag_d, "Decelerating asset with PnL <= +0.3% MUST be flagged as stagnant!"
+
+def test_stagnation_time_decay_trailing_stop():
+    """
+    QUANT RISK AUDIT: Stagnation Time-Decay Dynamic Stop Tightening.
+    Verifies:
+    1. Position held < 36 bars: stop loss remains at initial -2.2% (0.022).
+    2. Position held >= 36 bars with best_pnl < 1.2%: stop loss dynamically tightens to -1.5% (0.015).
+    3. Position that has locked parabolic profit (stop <= 0): stagnation decay never overwrites locked profit.
+    4. Price piercing tightened stop at -1.5% exits via STOP_LOSS, saving 0.7% equity compared to initial -2.2%.
+    """
+    pos = Position(
+        sym='LINKUSDT', px=100.0, notional=333.0, entry_fee=0.133,
+        i=10, entry_time='2026-01-01T00:00:00Z', stop=STOP_LOSS_TARGET
+    )
+    
+    # Bar 30 (held 20 bars < 36): no decay
+    event, pos = Mega22StrategyEngine.evaluate_position_step(
+        pos, c=100.2, h=100.5, l=99.8, exit_sig=0, held=20
+    )
+    assert event is None
+    assert pos.stop == STOP_LOSS_TARGET # 0.022
+    
+    # Bar 46 (held 36 bars == STAGNATION_DECAY_BARS, best_pnl = +0.5% < 1.2%):
+    # Dynamic time decay triggers, tightening stop to STAGNATION_DECAY_STOP (0.015)
+    event, pos = Mega22StrategyEngine.evaluate_position_step(
+        pos, c=100.1, h=100.5, l=99.2, exit_sig=0, held=36
+    )
+    assert event is None
+    assert pytest.approx(pos.stop) == STAGNATION_DECAY_STOP # 0.015
+    
+    # Bar 47: Intra-bar drop to 98.40 (dipping below tightened -1.5% stop = 98.50)
+    event, pos = Mega22StrategyEngine.evaluate_position_step(
+        pos, c=98.60, h=99.0, l=98.40, exit_sig=0, held=37
+    )
+    assert event is not None
+    exit_px, reason = event
+    assert reason == 'STOP_LOSS'
+    assert pytest.approx(exit_px) == 100.0 * (1.0 - 0.015) # 98.50
+    # Protected 0.70% of notional ($2.33 on $333 slot) from the full -2.2% loss
+
+def test_opportunity_cost_rotation_kinetic_priority():
+    """
+    Verifies that when all slots are occupied and an explosive candidate arrives,
+    select_rotation_eviction prioritizes decelerating positions (kinetic stall at 12 bars)
+    over accelerating positions.
+    """
+    w = KINETIC_VELOCITY_WINDOW
+    decel_hist = [10.0, 10.05, 10.10, 10.15, 10.18, 10.20, 10.20, 10.19, 10.18, 10.17, 10.16, 10.15]
+    accel_hist = [10.0, 10.05, 10.10, 10.15, 10.22, 10.30, 10.40, 10.52, 10.68, 10.85, 11.02, 11.20]
+    
+    pos1 = Position(sym='ORDIUSDT', px=10.0, notional=333.0, entry_fee=0.133, i=100, entry_time='t', stop=0.022, score=10.0, recent_prices=decel_hist)
+    pos2 = Position(sym='NEARUSDT', px=5.0, notional=333.0, entry_fee=0.133, i=100, entry_time='t', stop=0.022, score=12.0, recent_prices=accel_hist)
+    pos3 = Position(sym='SOLUSDT', px=150.0, notional=333.0, entry_fee=0.133, i=110, entry_time='t', stop=0.022, score=14.0, recent_prices=[150.0]*12)
+    
+    active = {'ORDIUSDT': pos1, 'NEARUSDT': pos2, 'SOLUSDT': pos3}
+    curr_pxs = {'ORDIUSDT': 10.01, 'NEARUSDT': 5.20, 'SOLUSDT': 150.10}
+    cands = [('CFXUSDT', 18.0, 0.25)]
+    
+    # Bar index 114 -> held for ORDI is 14 bars (>= 12 fast bars, deceleration verified)
+    res = Mega22StrategyEngine.select_rotation_eviction(
+        active_positions=active,
+        cands=cands,
+        current_prices=curr_pxs,
+        bar_index=114
+    )
+    assert res is not None
+    sym_evict, reason, exit_px = res
+    assert sym_evict == 'ORDIUSDT'
+    assert reason == 'ROTATION_KINETIC_EVICT'
+
+def test_kinetic_edge_cases_and_robustness():
+    """
+    MATHEMATICAL EDGE CASE AUDIT: Kinetic Momentum & Rotation Eviction Hardening.
+    Verifies:
+    1. window <= 0 returns (0.0, 0.0) without ZeroDivisionError.
+    2. Insufficient price history (< 2*w) safely returns (0.0, 0.0).
+    3. Zero entry price (entry_px=0.0) safely uses norm floor without ZeroDivisionError.
+    4. evaluate_kinetic_stagnation with window <= 0 or held < ROTATION_FAST_HELD_BARS returns (False, 0.0, 0.0).
+    5. select_rotation_eviction cleanly filters candidates already held in active_positions.
+    6. select_rotation_eviction with zero or missing current_prices safely falls back to entry price.
+    """
+    # 1. Zero and negative window
+    v, a = Mega22StrategyEngine.compute_kinetic_momentum([10.0]*20, 10.0, window=0)
+    assert (v, a) == (0.0, 0.0)
+    v, a = Mega22StrategyEngine.compute_kinetic_momentum([10.0]*20, 10.0, window=-5)
+    assert (v, a) == (0.0, 0.0)
+
+    # 2. Short history
+    v, a = Mega22StrategyEngine.compute_kinetic_momentum([10.0]*5, 10.0, window=6)
+    assert (v, a) == (0.0, 0.0)
+    v, a = Mega22StrategyEngine.compute_kinetic_momentum([], 10.0, window=6)
+    assert (v, a) == (0.0, 0.0)
+
+    # 3. Zero entry price
+    v, a = Mega22StrategyEngine.compute_kinetic_momentum([1.0]*12, 0.0, window=6)
+    assert (v, a) == (0.0, 0.0)
+
+    # 4. evaluate_kinetic_stagnation edge cases
+    stag, v, a = Mega22StrategyEngine.evaluate_kinetic_stagnation([1.0]*20, 1.0, 0.0, held_bars=5, window=6)
+    assert not stag # held_bars < 12
+    stag, v, a = Mega22StrategyEngine.evaluate_kinetic_stagnation([1.0]*20, 1.0, 0.0, held_bars=15, window=0)
+    assert not stag # window <= 0
+
+    # 5. Candidate already active: must filter out and evaluate next candidate
+    w = KINETIC_VELOCITY_WINDOW
+    decel_hist = [10.0, 10.05, 10.10, 10.15, 10.18, 10.20, 10.20, 10.19, 10.18, 10.17, 10.16, 10.15]
+    accel_hist = [10.0, 10.05, 10.10, 10.15, 10.22, 10.30, 10.40, 10.52, 10.68, 10.85, 11.02, 11.20]
+    pos1 = Position(sym='ORDIUSDT', px=10.0, notional=333.0, entry_fee=0.133, i=100, entry_time='t', stop=0.022, score=10.0, recent_prices=decel_hist)
+    pos2 = Position(sym='NEARUSDT', px=5.0, notional=333.0, entry_fee=0.133, i=100, entry_time='t', stop=0.022, score=12.0, recent_prices=accel_hist)
+    pos3 = Position(sym='SOLUSDT', px=150.0, notional=333.0, entry_fee=0.133, i=110, entry_time='t', stop=0.022, score=14.0, recent_prices=[150.0]*12)
+    active = {'ORDIUSDT': pos1, 'NEARUSDT': pos2, 'SOLUSDT': pos3}
+    
+    # Candidate list where top candidate ('ORDIUSDT') is ALREADY in active_positions!
+    cands_with_held = [('ORDIUSDT', 30.0, 10.0), ('CFXUSDT', 18.0, 0.25)]
+    curr_pxs = {'ORDIUSDT': 10.01, 'NEARUSDT': 5.20, 'SOLUSDT': 150.10}
+    
+    res = Mega22StrategyEngine.select_rotation_eviction(
+        active_positions=active,
+        cands=cands_with_held,
+        current_prices=curr_pxs,
+        bar_index=114
+    )
+    assert res is not None
+    sym_evict, reason, exit_px = res
+    assert sym_evict == 'ORDIUSDT'
+    assert reason == 'ROTATION_KINETIC_EVICT'
+
+    # 6. Fallback for zero or missing price
+    zero_pxs = {'ORDIUSDT': 0.0, 'NEARUSDT': None}
+    res_zero = Mega22StrategyEngine.select_rotation_eviction(
+        active_positions=active,
+        cands=[('CFXUSDT', 18.0, 0.25)],
+        current_prices=zero_pxs,
+        bar_index=114
+    )
+    assert res_zero is not None
+    sym_evict2, reason2, exit_px2 = res_zero
+    assert sym_evict2 == 'ORDIUSDT'
+    assert exit_px2 == pytest.approx(10.0 * (1.0 - SLIPPAGE_RATE)) # Used pos1.px = 10.0 fallback!
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
 

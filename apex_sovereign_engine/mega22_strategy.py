@@ -16,6 +16,10 @@ from mega22_constants import (
     FEE_RATE, SLIPPAGE_RATE, STOP_LOSS_TARGET, TAKE_PROFIT_TARGET,
     PARABOLIC_LOCK_TIERS, TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET,
     STALL_BARS_THRESHOLD, STALL_MAX_PNL, STALL_WORST_MIN_PNL,
+    ENABLE_STAGNATION_TIME_DECAY, STAGNATION_DECAY_BARS, STAGNATION_DECAY_STOP,
+    ENABLE_OPPORTUNITY_ROTATION, ROTATION_MIN_SCORE, ROTATION_HELD_BARS,
+    ROTATION_FAST_HELD_BARS, ROTATION_MAX_PNL, ROTATION_MIN_PNL, ROTATION_SCORE_EDGE,
+    ENABLE_KINETIC_EVICTION, KINETIC_VELOCITY_WINDOW, KINETIC_ACCEL_WINDOW,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS,
     BTC_24H_MIN_PCT, BTC_4H_MIN_PCT, BTC_HAWKES_MAX_INTENSITY,
     HAWKES_ALPHA, HAWKES_BETA, MEGA_22, MACRO_SYMBOL
@@ -38,6 +42,7 @@ class Position:
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
     score: float = 0.0               # Alpha explosion score at entry
+    recent_prices: List[float] = field(default_factory=list) # Trailing prices for kinetic momentum
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -55,7 +60,8 @@ class Position:
             'current_px': self.current_px,
             'unrealized_pnl': self.unrealized_pnl,
             'unrealized_pnl_pct': self.unrealized_pnl_pct,
-            'score': self.score
+            'score': self.score,
+            'recent_prices': list(self.recent_prices[-30:])
         }
 
     @classmethod
@@ -344,6 +350,12 @@ class Mega22StrategyEngine:
             if best_pnl >= trig and pos.stop > lock_offset:
                 pos.stop = lock_offset
 
+        # 1b. Dynamic Stagnation Time-Decay Trailing Stop
+        # If position made zero upward volatility after 36 bars (3 hrs), tighten stop to -1.5% to release slot faster
+        if not strict_parity and ENABLE_STAGNATION_TIME_DECAY and held >= STAGNATION_DECAY_BARS:
+            if pos.stop > STAGNATION_DECAY_STOP and best_pnl < 0.012:
+                pos.stop = STAGNATION_DECAY_STOP
+
         # 2. Trailing Ratchet Activation & Update
         if pos.highest_since_trail == 0.0:
             pos.highest_since_trail = h
@@ -392,3 +404,124 @@ class Mega22StrategyEngine:
             return (exit_px, reason), pos
 
         return None, pos
+
+    @staticmethod
+    def compute_kinetic_momentum(
+        price_history: List[float],
+        entry_px: float,
+        window: int = KINETIC_VELOCITY_WINDOW
+    ) -> Tuple[float, float]:
+        """
+        Computes kinetic price velocity slope (dP/dt) and acceleration (d^2P/dt^2).
+        v(t) = (P_t - P_{t-w}) / (w * P_entry)
+        v(t-w) = (P_{t-w} - P_{t-2w}) / (w * P_entry)
+        a(t) = (v(t) - v(t-w)) / w
+        Returns: (velocity, acceleration)
+        """
+        if window <= 0 or len(price_history) < 2 * window:
+            return 0.0, 0.0
+
+        norm = max(entry_px, 1e-6)
+        p_t = price_history[-1]
+        p_w = price_history[-window]
+        p_2w = price_history[-2 * window]
+
+        v_curr = (p_t - p_w) / (window * norm)
+        v_prev = (p_w - p_2w) / (window * norm)
+        accel = (v_curr - v_prev) / window
+        return float(v_curr), float(accel)
+
+    @staticmethod
+    def evaluate_kinetic_stagnation(
+        price_history: List[float],
+        entry_px: float,
+        pnl: float,
+        held_bars: int,
+        window: int = KINETIC_VELOCITY_WINDOW
+    ) -> Tuple[bool, float, float]:
+        """
+        Evaluates whether an active position is mathematically stagnant:
+        1. Held >= ROTATION_FAST_HELD_BARS (12 bars / 1 hr)
+        2. PnL <= ROTATION_MAX_PNL (+0.3%)
+        3. Velocity v <= 0.0005 and Acceleration a <= 0.0 (negative/zero kinetic impulse)
+        Returns: (is_stagnant, velocity, acceleration)
+        """
+        if window <= 0 or held_bars < ROTATION_FAST_HELD_BARS or len(price_history) < 2 * window:
+            return False, 0.0, 0.0
+
+        vel, accel = Mega22StrategyEngine.compute_kinetic_momentum(price_history, entry_px, window=window)
+        is_stagnant = (accel <= 0.0 and vel <= 0.0005 and pnl <= ROTATION_MAX_PNL)
+        return is_stagnant, vel, accel
+
+    @staticmethod
+    def select_rotation_eviction(
+        active_positions: Dict[str, Position],
+        cands: List[Tuple[str, float, Any]],
+        current_prices: Dict[str, float],
+        bar_index: int,
+        price_histories: Optional[Dict[str, List[float]]] = None
+    ) -> Optional[Tuple[str, str, float]]:
+        """
+        Selects stagnant position for opportunity rotation eviction when portfolio is at capacity
+        and an explosive candidate arrives (score >= ROTATION_MIN_SCORE).
+        Supports:
+        1. Fast kinetic eviction at 12 bars when acceleration d^2P/dt^2 <= 0.
+        2. Standard eviction at 18 bars.
+        Returns: Optional[Tuple[evict_sym, reason, exit_price]]
+        """
+        if not ENABLE_OPPORTUNITY_ROTATION or len(active_positions) < MAX_SLOTS or not cands:
+            return None
+
+        # Filter out candidates already held in active_positions
+        valid_cands = [c for c in cands if c[0] not in active_positions]
+        if not valid_cands:
+            return None
+
+        top_cand_sym, top_cand_score = valid_cands[0][0], valid_cands[0][1]
+        if top_cand_score < ROTATION_MIN_SCORE:
+            return None
+
+        evictable = []
+        for sym, pos in active_positions.items():
+            held = bar_index - pos.i
+            curr_px = current_prices.get(sym, pos.px)
+            if curr_px is None or curr_px <= 0:
+                curr_px = pos.px
+            pnl = (curr_px - pos.px) / pos.px
+            pos_score = getattr(pos, 'score', 0.0)
+
+            # Check kinetic momentum deceleration
+            is_kinetic_stalled = False
+            vel, accel = 0.0, 0.0
+            hist = None
+            if price_histories and sym in price_histories:
+                hist = price_histories[sym]
+            elif getattr(pos, 'recent_prices', None):
+                hist = pos.recent_prices
+
+            if ENABLE_KINETIC_EVICTION and hist and len(hist) >= 2 * KINETIC_VELOCITY_WINDOW:
+                is_kinetic_stalled, vel, accel = Mega22StrategyEngine.evaluate_kinetic_stagnation(
+                    hist, pos.px, pnl, held
+                )
+
+            min_bars = ROTATION_FAST_HELD_BARS if is_kinetic_stalled else ROTATION_HELD_BARS
+            if (held >= min_bars and
+                ROTATION_MIN_PNL <= pnl <= ROTATION_MAX_PNL and
+                pos.stop > 0 and
+                (ROTATION_SCORE_EDGE <= 0.0 or (top_cand_score - pos_score) >= ROTATION_SCORE_EDGE)):
+                # Priority: kinetic stall (0), then longest held (-held), lowest pnl
+                priority = 0 if is_kinetic_stalled else 1
+                evictable.append((sym, priority, held, pnl, pos_score))
+
+        if not evictable:
+            return None
+
+        # Sort: decelerating positions evicted first, tie-break on longest held and lowest pnl
+        evictable.sort(key=lambda x: (x[1], -x[2], x[3], x[4]))
+        sym_evict = evictable[0][0]
+        curr_px = current_prices.get(sym_evict, active_positions[sym_evict].px)
+        if curr_px is None or curr_px <= 0:
+            curr_px = active_positions[sym_evict].px
+        exit_px = curr_px * (1.0 - SLIPPAGE_RATE)
+        reason = 'ROTATION_KINETIC_EVICT' if evictable[0][1] == 0 else 'ROTATION_EVICT'
+        return sym_evict, reason, exit_px
