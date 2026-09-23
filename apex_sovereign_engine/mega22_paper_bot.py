@@ -23,8 +23,8 @@ import pandas as pd
 
 from mega22_constants import (
     MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30,
-    APEX_35_EXPANSION, APEX_35, ACTIVE_UNIVERSE,
-    MACRO_SYMBOL, ALL_SYMBOLS,
+    APEX_35_EXPANSION, APEX_35, APEX_38_EXPANSION, APEX_38, ACTIVE_UNIVERSE,
+    CANDIDATE_MIN_SCORES, MACRO_SYMBOL, ALL_SYMBOLS,
     INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
     STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
     TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET, STALL_BARS_THRESHOLD,
@@ -34,6 +34,7 @@ from mega22_constants import (
     ROTATION_MAX_PNL, ROTATION_MIN_PNL, ROTATION_SCORE_EDGE
 )
 from mega22_strategy import Mega22StrategyEngine, Position, TradeRecord
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,8 +89,9 @@ class Mega22PaperBot:
                 "best_bid": 0.0,
                 "best_ask": 0.0,
                 "spread_bps": 0.0,
-                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else "MACRO"))),
+                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else ("APEX_38" if s in APEX_38_EXPANSION else "MACRO")))),
                 "tick_dir": "flat"
+
             } for s in ALL_SYMBOLS
         }
         
@@ -387,8 +389,9 @@ class Mega22PaperBot:
                                         b = float(td.get('bidPrice', td.get('b', c)))
                                         a = float(td.get('askPrice', td.get('a', c)))
                                         spread = ((a - b) / c * 10000.0) if c > 0 else 0.0
-                                        group = "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else "MACRO")))
+                                        group = "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else ("APEX_38" if s in APEX_38_EXPANSION else "MACRO"))))
                                         
+
                                         self.latest_prices[s] = c
                                         self.latest_tickers[s] = {
                                             'sym': s,
@@ -549,7 +552,8 @@ class Mega22PaperBot:
         a = float(data.get('a', c))
         spread_bps = ((a - b) / c * 10000.0) if c > 0 else 0.0
 
-        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else ("APEX_ALPHA" if symbol in APEX_ADDITIONS else ("APEX_35" if symbol in APEX_35_EXPANSION else "MACRO")))
+        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else ("APEX_ALPHA" if symbol in APEX_ADDITIONS else ("APEX_35" if symbol in APEX_35_EXPANSION else ("APEX_38" if symbol in APEX_38_EXPANSION else "MACRO"))))
+
 
         self.latest_tickers[symbol] = {
             'sym': symbol,
@@ -852,7 +856,8 @@ class Mega22PaperBot:
             if ind and ind.get('is_cand') == 1:
                 price = float(ind.get('price', 0.0))
                 score = float(ind.get('score', 0.0))
-                if price > 0.0 and not np.isnan(price) and not np.isnan(score):
+                min_score_req = CANDIDATE_MIN_SCORES.get(sym, 0.0)
+                if price > 0.0 and not np.isnan(price) and not np.isnan(score) and score >= min_score_req:
                     cands.append((sym, score, price))
 
         # Cross-sectional ranking by Explosion Alpha Score descending
@@ -861,7 +866,7 @@ class Mega22PaperBot:
         # Smart Opportunity-Cost Rotation:
         # If at max capacity and a high-conviction candidate emerges (score >= ROTATION_MIN_SCORE),
         # check if any active position is stagnant (held >= ROTATION_HELD_BARS, ROTATION_MIN_PNL <= PnL <= ROTATION_MAX_PNL, stop > 0)
-        # and candidate holds score advantage >= ROTATION_SCORE_EDGE.
+        # and candidate holds score advantage >= ROTATION_SCORE_EDGE (or ROTATION_SCORE_EDGE <= 0.0).
         if ENABLE_OPPORTUNITY_ROTATION and len(self.active_positions) >= MAX_SLOTS and len(cands) > 0:
             top_cand_sym, top_cand_score, _ = cands[0]
             if top_cand_score >= ROTATION_MIN_SCORE:
@@ -874,8 +879,9 @@ class Mega22PaperBot:
                     if (held >= ROTATION_HELD_BARS and
                         ROTATION_MIN_PNL <= pnl <= ROTATION_MAX_PNL and
                         pos.stop > 0 and
-                        (top_cand_score - pos_score) >= ROTATION_SCORE_EDGE):
+                        (ROTATION_SCORE_EDGE <= 0.0 or (top_cand_score - pos_score) >= ROTATION_SCORE_EDGE)):
                         evictable.append((sym, held, pnl, pos_score))
+
                 if evictable:
                     # Evict longest-held stagnant position first, tie-break on worse PnL and lower alpha score
                     evictable.sort(key=lambda x: (-x[1], x[2], x[3]))
@@ -1051,8 +1057,9 @@ class Mega22PaperBot:
             )
             leaderboard.append({
                 "sym": sym,
-                "group": "GOLDEN_11" if sym in GOLDEN_11 else ("TITAN_11" if sym in TITAN_11 else ("APEX_ALPHA" if sym in APEX_ADDITIONS else "APEX_35")),
+                "group": "GOLDEN_11" if sym in GOLDEN_11 else ("TITAN_11" if sym in TITAN_11 else ("APEX_ALPHA" if sym in APEX_ADDITIONS else ("APEX_35" if sym in APEX_35_EXPANSION else "APEX_38"))),
                 "price": px,
+
                 "change_24h": ticker.get('change_24h', 0.0),
                 "high_24h": ticker.get('high_24h', px),
                 "low_24h": ticker.get('low_24h', px),
@@ -1127,7 +1134,10 @@ class Mega22PaperBot:
             "apex_30": APEX_30,
             "apex_35_expansion": APEX_35_EXPANSION,
             "apex_35": APEX_35,
+            "apex_38_expansion": APEX_38_EXPANSION,
+            "apex_38": APEX_38,
             "active_universe": ACTIVE_UNIVERSE,
+
             "global_guard_active": self.bar_index <= self.stoploss_guard_until,
             "active_positions": [p.to_dict() for p in self.active_positions.values()],
             "recent_trades": [t.to_dict() for t in self.trade_history[-20:]],

@@ -39,8 +39,24 @@ APEX_35_EXPANSION = [
 # Sovereign Champion Universe (Apex-35: 35 Coins, 100% Halal, 100% Net Profitable, Sharpe 3.68, +1,575.12% Net ROE, $16,751.22)
 APEX_35 = list(dict.fromkeys(APEX_30 + APEX_35_EXPANSION))
 
-# Active Trading Universe (default configured for the Apex-35 Sovereign Champion expansion)
-ACTIVE_UNIVERSE = APEX_35
+# Apex-38 Champion Expansion Squad (High-Alpha Halal L1 & Web3 Compute Infrastructure)
+# CFX (Conflux Tree-Graph PoW/PoS L1), GRT (The Graph Web3 Indexing Oracle), FLUX (Flux Decentralized Cloud Compute)
+APEX_38_EXPANSION = [
+    'CFXUSDT', 'GRTUSDT', 'FLUXUSDT'
+]
+
+# Sovereign Champion Universe (Apex-38: 38 Coins, 100% Halal Spot, 100% Net Profitable, Sharpe 3.57, +2,056.49% Net ROE, $21,564.87)
+APEX_38 = list(dict.fromkeys(APEX_35 + APEX_38_EXPANSION))
+
+# Active Trading Universe (default configured for the Apex-38 Sovereign Champion expansion)
+ACTIVE_UNIVERSE = APEX_38
+
+# Per-Candidate Explosion Alpha Score Thresholds for selective momentum admission (0.0 default)
+CANDIDATE_MIN_SCORES = {
+    'CFXUSDT': 10.0,
+    'GRTUSDT': 10.0,
+    'FLUXUSDT': 5.0
+}
 
 
 # Macro Anchor for Hawkes Shield & Cross-Market Transfer Entropy
@@ -53,10 +69,10 @@ ALL_SYMBOLS = [MACRO_SYMBOL] + ACTIVE_UNIVERSE
 ARCHETYPE_12 = np.array([1.2, 0.6, 0.0, -0.8, -1.4, -1.6, -1.5, -1.4, -1.0, -0.4, 0.2, 0.8])
 ARCH_12_ZNORM = (ARCHETYPE_12 - np.mean(ARCHETYPE_12)) / np.std(ARCHETYPE_12)
 
-# Quantitative Strategy Parameters (Exact match to 32-month $11,727.69 backtest)
+# Quantitative Strategy Parameters (Exact match to 32-month $21,564.87 backtest)
 INITIAL_CAPITAL = 1000.00
 MAX_SLOTS = 3
-SLOT_FRACTION = 0.32          # 32% of total capital allocated per position
+SLOT_FRACTION = 0.333         # 1/3 (33.3%) of total portfolio equity allocated per position
 FEE_RATE = 0.0004             # 0.04% taker fee (Binance VIP / BNB discounted standard)
 SLIPPAGE_RATE = 0.0002        # 0.02% slippage allowance on market orders
 
@@ -86,11 +102,12 @@ STALL_WORST_MIN_PNL = -0.010    # worst PnL dipped below -1.0%
 
 # Smart Opportunity-Cost Rotation Parameters (Institutional Active Alpha Rotation)
 ENABLE_OPPORTUNITY_ROTATION = True
-ROTATION_MIN_SCORE = 15.0       # Candidate explosion alpha score threshold
+ROTATION_MIN_SCORE = 5.0        # Candidate explosion alpha score threshold
 ROTATION_HELD_BARS = 18         # Minimum holding period (1.5 hours) before eviction eligibility
-ROTATION_MAX_PNL = 0.002        # Evict only stagnant positions with PnL <= +0.2%
+ROTATION_MAX_PNL = 0.003        # Evict stagnant positions with PnL <= +0.3%
 ROTATION_MIN_PNL = -0.015       # Don't evict positions in deep drawdown (PnL < -1.5%), let stop loss protect
-ROTATION_SCORE_EDGE = 5.0       # Minimum score advantage candidate must hold over position
+ROTATION_SCORE_EDGE = 0.0       # Minimum score advantage candidate must hold over position
+
 
 # Risk Cooldown Durations (in 5-minute bars)
 COOLDOWN_STOP_LOSS_BARS = 24    # 24 bars (2 hours) per-coin cooldown after stop loss

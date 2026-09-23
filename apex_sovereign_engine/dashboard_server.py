@@ -31,10 +31,11 @@ if str(CURRENT_DIR) not in sys.path:
 from mega22_paper_bot import Mega22PaperBot
 from mega22_constants import (
     MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30,
-    APEX_35_EXPANSION, APEX_35, ACTIVE_UNIVERSE,
+    APEX_35_EXPANSION, APEX_35, APEX_38_EXPANSION, APEX_38, ACTIVE_UNIVERSE,
     MACRO_SYMBOL, ALL_SYMBOLS,
     INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION, BTC_HAWKES_MAX_INTENSITY
 )
+
 
 from contextlib import asynccontextmanager
 
@@ -1249,18 +1250,20 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                         <span>🔥 الخريطة الحرارية اللحظية (Apex-35 Real-Time Market Heatmap)</span>
                     </div>
                     <div class="filter-strip">
-                        <span class="filter-pill active" onclick="setHeatmapFilter('all', this)">الكل (35)</span>
+                        <span class="filter-pill active" onclick="setHeatmapFilter('all', this)">الكل (38)</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('GOLDEN_11', this)">⚡ Golden-11</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('TITAN_11', this)">🏛️ Titan-11</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('APEX_ALPHA', this)">👑 Apex-Alpha</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('APEX_35', this)">🚀 Apex-35</span>
+                        <span class="filter-pill" onclick="setHeatmapFilter('APEX_38', this)">🏆 Apex-38</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('pos', this)">🟢 صفقات نشطة</span>
                         <span class="filter-pill" onclick="setHeatmapFilter('triggered', this)">🚀 إشارات انفجار</span>
                     </div>
                 </div>
                 <div class="heatmap-grid" id="heatmap-container">
-                    <!-- Dynamic 35 coin tiles rendered by JS -->
+                    <!-- Dynamic 38 coin tiles rendered by JS -->
                 </div>
+
             </div>
 
             <!-- Right: Mini Shield Monitor & Whale Alpha Radar -->
@@ -1937,7 +1940,10 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
                 filtered = filtered.filter(x => x.group === 'APEX_ALPHA');
             } else if (heatmapFilterMode === 'APEX_35') {
                 filtered = filtered.filter(x => x.group === 'APEX_35');
+            } else if (heatmapFilterMode === 'APEX_38') {
+                filtered = filtered.filter(x => x.group === 'APEX_38');
             } else if (heatmapFilterMode === 'pos') {
+
                 filtered = filtered.filter(x => x.status === 'POSITION_OPEN');
             } else if (heatmapFilterMode === 'triggered') {
                 filtered = filtered.filter(x => x.is_candidate === 1 || x.status === 'TRIGGERED');
