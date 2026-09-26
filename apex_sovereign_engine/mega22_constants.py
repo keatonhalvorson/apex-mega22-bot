@@ -48,14 +48,26 @@ APEX_38_EXPANSION = [
 # Sovereign Champion Universe (Apex-38: 38 Coins, 100% Halal Spot, 100% Net Profitable, Sharpe 3.57, +2,056.49% Net ROE, $21,564.87)
 APEX_38 = list(dict.fromkeys(APEX_35 + APEX_38_EXPANSION))
 
-# Active Trading Universe (default configured for the Apex-38 Sovereign Champion expansion)
-ACTIVE_UNIVERSE = APEX_38
+# Apex-51 High-Velocity Sovereign Expansion Squad (Verified Halal Spot 2025 Alpha Drivers)
+APEX_51_EXPANSION = [
+    'ARUSDT', 'ASTRUSDT', 'FLOWUSDT', 'QNTUSDT', 'EGLDUSDT',
+    'MINAUSDT', 'ONEUSDT', 'BATUSDT', 'MANAUSDT', 'TAOUSDT',
+    'XTZUSDT', 'INJUSDT', 'STXUSDT'
+]
+
+# Sovereign Apex-51 Master Universe (51 Halal Coins, Spot 1x Cash Only, +361.38% ROE, $230.69)
+APEX_51 = list(dict.fromkeys(APEX_38 + APEX_51_EXPANSION))
+
+# Active Trading Universe (Default configured for Apex-51)
+ACTIVE_UNIVERSE = APEX_51
 
 # Per-Candidate Explosion Alpha Score Thresholds for selective momentum admission (0.0 default)
 CANDIDATE_MIN_SCORES = {
     'CFXUSDT': 10.0,
     'GRTUSDT': 10.0,
-    'FLUXUSDT': 5.0
+    'FLUXUSDT': 5.0,
+    'EGLDUSDT': 10.0,
+    'ADAUSDT': 5.0
 }
 
 
@@ -69,26 +81,31 @@ ALL_SYMBOLS = [MACRO_SYMBOL] + ACTIVE_UNIVERSE
 ARCHETYPE_12 = np.array([1.2, 0.6, 0.0, -0.8, -1.4, -1.6, -1.5, -1.4, -1.0, -0.4, 0.2, 0.8])
 ARCH_12_ZNORM = (ARCHETYPE_12 - np.mean(ARCHETYPE_12)) / np.std(ARCHETYPE_12)
 
-# Quantitative Strategy Parameters (Exact match to 32-month $21,564.87 backtest)
-INITIAL_CAPITAL = 1000.00
-MAX_SLOTS = 3
-SLOT_FRACTION = 0.333         # 1/3 (33.3%) of total portfolio equity allocated per position
+# Quantitative Strategy Parameters (Exact match to validated 51-coin $50 challenge)
+INITIAL_CAPITAL = 50.00
+MAX_SLOTS = 1
+SLOT_FRACTION = 0.98         # Single slot all-in (98% of available capital per trade, 2% fee buffer)
 FEE_RATE = 0.0004             # 0.04% taker fee (Binance VIP / BNB discounted standard)
 SLIPPAGE_RATE = 0.0002        # 0.02% slippage allowance on market orders
 
-# Exit Parameters
-STOP_LOSS_TARGET = 0.022      # -2.2% Stop Loss
-TAKE_PROFIT_TARGET = 0.065    # +6.5% Take Profit
+# Exit Parameters & Dual-Regime Take Profit
+STOP_LOSS_TARGET = 0.022          # -2.2% Stop Loss
+TAKE_PROFIT_BASE = 0.065          # +6.5% Base Take Profit
+TAKE_PROFIT_HIGH_ALPHA = 0.092    # +9.2% High-Alpha Runner Target (score >= 11.0)
+HIGH_ALPHA_SCORE_THRESHOLD = 11.0 # Kinetic acceleration cutoff for +9.2% runner
+TAKE_PROFIT_TARGET = TAKE_PROFIT_BASE
 
-# Dynamic 4-Tier Parabolic Profit Lock: (trigger_best_pnl, locked_stop_offset)
+# Dynamic Progressive 4-Tier Parabolic Profit Lock: (trigger_best_pnl, locked_stop_offset)
 # Note: negative offset in stop means locked positive profit floor
-# best_pnl >= +1.6% -> lock +0.5% profit (stop = -0.005)
-# best_pnl >= +3.0% -> lock +1.8% profit (stop = -0.018)
-# best_pnl >= +4.8% -> lock +3.5% profit (stop = -0.035)
+# best_pnl >= +1.6% -> lock +0.6% profit (stop = -0.006)
+# best_pnl >= +2.8% -> lock +1.6% profit (stop = -0.016)
+# best_pnl >= +4.5% -> lock +3.2% profit (stop = -0.032)
+# best_pnl >= +6.5% -> lock +5.0% profit (stop = -0.050)
 PARABOLIC_LOCK_TIERS = [
-    (0.016, -0.005),
-    (0.030, -0.018),
-    (0.048, -0.035),
+    (0.016, -0.006),
+    (0.028, -0.016),
+    (0.045, -0.032),
+    (0.065, -0.050),
 ]
 
 # Asymmetric Trailing Ratchet Parameters

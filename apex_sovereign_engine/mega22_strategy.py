@@ -14,6 +14,7 @@ from numpy.lib.stride_tricks import sliding_window_view
 from mega22_constants import (
     ARCHETYPE_12, ARCH_12_ZNORM, INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION,
     FEE_RATE, SLIPPAGE_RATE, STOP_LOSS_TARGET, TAKE_PROFIT_TARGET,
+    TAKE_PROFIT_BASE, TAKE_PROFIT_HIGH_ALPHA, HIGH_ALPHA_SCORE_THRESHOLD,
     PARABOLIC_LOCK_TIERS, TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET,
     STALL_BARS_THRESHOLD, STALL_MAX_PNL, STALL_WORST_MIN_PNL,
     ENABLE_STAGNATION_TIME_DECAY, STAGNATION_DECAY_BARS, STAGNATION_DECAY_STOP,
@@ -45,6 +46,9 @@ class Position:
     recent_prices: List[float] = field(default_factory=list) # Trailing prices for kinetic momentum
 
     def to_dict(self) -> Dict[str, Any]:
+        tp_target = TAKE_PROFIT_HIGH_ALPHA if getattr(self, 'score', 0.0) >= HIGH_ALPHA_SCORE_THRESHOLD else TAKE_PROFIT_BASE
+        stop_px = self.px * (1.0 - self.stop)
+        tp_px = self.px * (1.0 + tp_target)
         return {
             'sym': self.sym,
             'px': self.px,
@@ -53,6 +57,9 @@ class Position:
             'i': self.i,
             'entry_time': self.entry_time,
             'stop': self.stop,
+            'stop_px': stop_px,
+            'tp_px': tp_px,
+            'tp_target': tp_target,
             'trailing_active': self.trailing_active,
             'highest_since_trail': self.highest_since_trail,
             'highest_seen': self.highest_seen,
@@ -382,12 +389,13 @@ class Mega22StrategyEngine:
             # If already locked in a previous bar/tick (prev_stop <= 0), price dipping below prev_stop exits immediately
             # If newly locked on this bar (prev_stop > 0), bar close below new stop exits
             is_stop = (worst_pnl <= -prev_stop) if prev_stop <= 0 else (pnl <= -pos.stop)
-        is_tp = best_pnl >= TAKE_PROFIT_TARGET
+        tp_target = TAKE_PROFIT_HIGH_ALPHA if getattr(pos, 'score', 0.0) >= HIGH_ALPHA_SCORE_THRESHOLD else TAKE_PROFIT_BASE
+        is_tp = best_pnl >= tp_target
         is_stalled = (held >= STALL_BARS_THRESHOLD) and (pnl < STALL_MAX_PNL) and (worst_pnl < STALL_WORST_MIN_PNL)
 
         if is_stop or is_tp or is_stalled:
             if is_tp and not (worst_pnl <= -prev_stop):
-                exit_px = pos.px * (1.0 + TAKE_PROFIT_TARGET)
+                exit_px = pos.px * (1.0 + tp_target)
                 reason = 'TAKE_PROFIT'
             elif is_stop and pos.stop <= 0:
                 exit_px = pos.px * (1.0 - pos.stop)
@@ -396,7 +404,7 @@ class Mega22StrategyEngine:
                 exit_px = pos.px * (1.0 - pos.stop)
                 reason = 'STOP_LOSS'
             elif is_tp:
-                exit_px = pos.px * (1.0 + TAKE_PROFIT_TARGET)
+                exit_px = pos.px * (1.0 + tp_target)
                 reason = 'TAKE_PROFIT'
             else:
                 exit_px = c * (1.0 - SLIPPAGE_RATE)

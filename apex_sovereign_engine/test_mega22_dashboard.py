@@ -88,7 +88,7 @@ def test_live_floating_pnl_on_tick(tmp_path):
 def test_bot_pause_resume_and_emergency_close(tmp_path):
     """Test pause prevents new entries, resume allows them, and emergency close liquidates all positions."""
     journal = tmp_path / "test_controls.json"
-    bot = Mega22PaperBot(journal_path=journal)
+    bot = Mega22PaperBot(journal_path=journal, max_slots=3, slot_fraction=0.33)
     
     # 1. Pause
     bot.pause_trading()
@@ -246,6 +246,119 @@ def test_websocket_live_streaming():
         alert_msg = ws.receive_json()
         assert alert_msg["type"] == "alert"
         assert alert_msg["data"]["title"] == "QUANT TERMINAL TEST"
+
+def test_50dollar_capital_sizing_and_execution_3slots_vs_1slot(tmp_path):
+    """
+    Verify $50 capital sizing identically matches the Boost audit:
+    1. 3-slots mode allocates 33.3% (~$16.65) per slot and opens trades (not blocked by > $50).
+    2. 1-slot mode allocates 98% (~$49.00) into a single trade.
+    3. Binance $5.00 min notional order rule is strictly adhered to.
+    """
+    # 1. Test 3-slots mode (default audit setup)
+    journal_3 = tmp_path / "test_3slots.json"
+    bot3 = Mega22PaperBot(initial_capital=50.0, max_slots=3, slot_fraction=0.333, journal_path=journal_3)
+    assert bot3.max_slots == 3
+    assert bot3.available_cash == 50.0
+    bot3.is_paused = False
+
+    # Feed candidate signal for ORDIUSDT
+    bot3.latest_indicators["ORDIUSDT"] = {"is_cand": 1, "score": 95.0, "price": 10.0}
+    bot3._evaluate_portfolio_entries()
+
+    assert "ORDIUSDT" in bot3.active_positions, "Position must open with $50 capital in 3-slots mode!"
+    pos3 = bot3.active_positions["ORDIUSDT"]
+    # Notional should be 50.0 * 0.333 = 16.65
+    assert pytest.approx(pos3.notional, rel=1e-3) == 16.65
+    assert pos3.notional >= 5.00, "Must satisfy Binance $5.00 min notional rule"
+    assert len(bot3.active_positions) == 1
+
+    # 2. Test 1-slot mode (full capital mode requested by user)
+    journal_1 = tmp_path / "test_1slot.json"
+    bot1 = Mega22PaperBot(initial_capital=50.0, max_slots=1, slot_fraction=0.98, journal_path=journal_1)
+    assert bot1.max_slots == 1
+    assert bot1.available_cash == 50.0
+    bot1.is_paused = False
+
+    # Feed candidate signal for TIAUSDT
+    bot1.latest_indicators["TIAUSDT"] = {"is_cand": 1, "score": 95.0, "price": 5.0}
+    bot1._evaluate_portfolio_entries()
+
+    assert "TIAUSDT" in bot1.active_positions, "Position must open in 1-slot mode!"
+    pos1 = bot1.active_positions["TIAUSDT"]
+    # Notional should be 50.0 * 0.98 = 49.00
+    assert pytest.approx(pos1.notional, rel=1e-3) == 49.00
+    assert len(bot1.active_positions) == 1
+
+    # In 1-slot mode, trying to add a second candidate should be rejected because slots are full (1/1)
+    bot1.latest_indicators["NEARUSDT"] = {"is_cand": 1, "score": 90.0, "price": 2.0}
+    bot1._evaluate_portfolio_entries()
+    assert "NEARUSDT" not in bot1.active_positions, "Second position must be blocked when 1-slot is occupied"
+
+def test_klines_endpoint_and_seed_prices():
+    """Verify that /api/klines/{sym} returns valid 5m candle bars and prices are seeded offline."""
+    client = TestClient(app)
+
+    # 1. Klines endpoint
+    res = client.get("/api/klines/NEARUSDT")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["sym"] == "NEARUSDT"
+    candles = data["candles"]
+    assert isinstance(candles, list)
+    assert len(candles) > 0, "Should return recent candle bars"
+    first_bar = candles[0]
+    # Each bar must be dict with time, open, high, low, close, volume
+    assert all(k in first_bar for k in ("time", "open", "high", "low", "close", "volume"))
+    assert all(isinstance(first_bar[k], (int, float)) for k in ("open", "high", "low", "close", "volume"))
+    assert first_bar["high"] >= first_bar["low"], "High must be >= Low"
+
+    # 2. Tickers endpoint has seeded prices > 0
+    res_tickers = client.get("/api/tickers")
+    assert res_tickers.status_code == 200
+    tickers = res_tickers.json()
+    # BTCUSDT and active universe pairs should have positive prices
+    assert "BTCUSDT" in tickers
+    assert tickers["BTCUSDT"]["price"] > 0
+    assert "NEARUSDT" in tickers
+    assert tickers["NEARUSDT"]["price"] > 0
+
+def test_set_slots_rest_and_websocket():
+    """Verify dynamic slot switching via REST API and WebSocket."""
+    client = TestClient(app)
+
+    # REST: switch to 1 slot
+    res = client.post("/api/action/set_slots?slots=1")
+    assert res.status_code == 200
+    d = res.json()
+    assert d["max_slots"] == 1
+    assert pytest.approx(d["slot_fraction"], rel=1e-3) == 0.98
+
+    # REST: switch to 3 slots
+    res = client.post("/api/action/set_slots?slots=3")
+    assert res.status_code == 200
+    d = res.json()
+    assert d["max_slots"] == 3
+    assert pytest.approx(d["slot_fraction"], rel=1e-3) == 0.3333333333333333
+
+    # REST: invalid slots rejected
+    res = client.post("/api/action/set_slots?slots=0")
+    assert res.status_code == 400
+    res = client.post("/api/action/set_slots?slots=6")
+    assert res.status_code == 400
+
+    # WebSocket: switch slot
+    with client.websocket_connect("/ws/live") as ws:
+        _ = ws.receive_json()  # snapshot
+        ws.send_json({"action": "set_slots", "slots": 1})
+        time.sleep(0.05)
+        # Verify state reflects 1 slot
+        res_state = client.get("/api/state")
+        assert res_state.json()["max_slots"] == 1
+        # Switch back to 3 slots
+        ws.send_json({"action": "set_slots", "slots": 3})
+        time.sleep(0.05)
+        res_state = client.get("/api/state")
+        assert res_state.json()["max_slots"] == 3
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

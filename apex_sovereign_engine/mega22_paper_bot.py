@@ -23,10 +23,12 @@ import pandas as pd
 
 from mega22_constants import (
     MEGA_22, GOLDEN_11, TITAN_11, APEX_ADDITIONS, APEX_30,
-    APEX_35_EXPANSION, APEX_35, APEX_38_EXPANSION, APEX_38, ACTIVE_UNIVERSE,
+    APEX_35_EXPANSION, APEX_35, APEX_38_EXPANSION, APEX_38,
+    APEX_51_EXPANSION, APEX_51, ACTIVE_UNIVERSE,
     CANDIDATE_MIN_SCORES, MACRO_SYMBOL, ALL_SYMBOLS,
     INITIAL_CAPITAL, MAX_SLOTS, SLOT_FRACTION, FEE_RATE, SLIPPAGE_RATE,
-    STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, PARABOLIC_LOCK_TIERS,
+    STOP_LOSS_TARGET, TAKE_PROFIT_TARGET, TAKE_PROFIT_BASE, TAKE_PROFIT_HIGH_ALPHA, HIGH_ALPHA_SCORE_THRESHOLD,
+    PARABOLIC_LOCK_TIERS,
     TRAILING_TRIGGER_MIN_PNL, TRAILING_OFFSET, STALL_BARS_THRESHOLD,
     ENABLE_STAGNATION_TIME_DECAY, STAGNATION_DECAY_BARS, STAGNATION_DECAY_STOP,
     COOLDOWN_STOP_LOSS_BARS, CONSECUTIVE_STOPS_TRIGGER, COOLDOWN_GLOBAL_GUARD_BARS,
@@ -61,10 +63,16 @@ class Mega22PaperBot:
     Connects to Binance Spot Public WebSocket Stream (zero API keys required).
     Runs asynchronously, maintaining fixed-size ring buffers in memory.
     """
-    def __init__(self, journal_path: Path = JOURNAL_FILE):
+    def __init__(self, journal_path: Path = JOURNAL_FILE, max_slots: int = MAX_SLOTS, slot_fraction: Optional[float] = None, initial_capital: float = INITIAL_CAPITAL):
         self.journal_path = journal_path
-        self.capital: float = INITIAL_CAPITAL
-        self.available_cash: float = INITIAL_CAPITAL
+        self.initial_capital: float = initial_capital
+        self.capital: float = initial_capital
+        self.available_cash: float = initial_capital
+        self.max_slots: int = max_slots
+        if slot_fraction is not None:
+            self.slot_fraction = slot_fraction
+        else:
+            self.slot_fraction = 0.98 if self.max_slots == 1 else SLOT_FRACTION
         self.active_positions: Dict[str, Position] = {}
         self.trade_history: List[TradeRecord] = []
         
@@ -91,7 +99,7 @@ class Mega22PaperBot:
                 "best_bid": 0.0,
                 "best_ask": 0.0,
                 "spread_bps": 0.0,
-                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else ("APEX_38" if s in APEX_38_EXPANSION else "MACRO")))),
+                "group": "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else ("APEX_38" if s in APEX_38_EXPANSION else ("APEX_51" if s in APEX_51_EXPANSION else "MACRO"))))),
                 "tick_dir": "flat"
 
             } for s in ALL_SYMBOLS
@@ -120,8 +128,9 @@ class Mega22PaperBot:
         self._pending_debounce_tasks: Dict[pd.Timestamp, asyncio.Task] = {}
         self._processed_intervals: set = set()
 
-        # Load persistent state
+        # Load persistent state and prime offline baseline prices
         self._load_journal()
+        self._seed_offline_baseline_prices()
 
     def add_listener(self, callback: Callable[[str, Dict[str, Any]], None]):
         """Register a callback for real-time WebSocket dashboard broadcast."""
@@ -159,7 +168,8 @@ class Mega22PaperBot:
         try:
             with open(self.journal_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            self.capital = float(data.get("capital", INITIAL_CAPITAL))
+            self.initial_capital = float(data.get("initial_capital", getattr(self, "initial_capital", INITIAL_CAPITAL)))
+            self.capital = float(data.get("capital", self.initial_capital))
             self.available_cash = float(data.get("available_cash", self.capital))
             self.bar_index = int(data.get("bar_index", 0))
             self.consecutive_stops = int(data.get("consecutive_stops", 0))
@@ -184,6 +194,7 @@ class Mega22PaperBot:
         try:
             state = {
                 "last_update": datetime.now(timezone.utc).isoformat(),
+                "initial_capital": round(getattr(self, "initial_capital", INITIAL_CAPITAL), 2),
                 "capital": round(self.get_total_equity(), 2),
                 "available_cash": round(self.available_cash, 2),
                 "bar_index": self.bar_index,
@@ -201,6 +212,181 @@ class Mega22PaperBot:
             tmp_path.replace(self.journal_path)
         except Exception as e:
             logger.error(f"Failed to save journal: {e}")
+
+    def _seed_offline_baseline_prices(self):
+        """
+        Seeds baseline market prices and 24h ticker metrics from local historical datasets.
+        Guarantees that from millisecond zero of bot boot, all 51 assets display realistic prices,
+        ranges, volumes, and technical indicators in the dashboard before live WebSocket ticks arrive.
+        """
+        cached_data = None
+        for cand_dir in [Path(__file__).resolve().parent.parent, Path.cwd()]:
+            cache_path = cand_dir / "cached_compact_expanded.pkl"
+            if cache_path.exists():
+                try:
+                    import pickle
+                    with open(cache_path, "rb") as f:
+                        cached_all = pickle.load(f)
+                    cached_data = cached_all.get("2025-12") or cached_all.get(list(cached_all.keys())[-1])
+                    break
+                except Exception as e:
+                    logger.debug(f"Failed loading cache: {e}")
+
+        for s in ALL_SYMBOLS:
+            px = 0.0
+            last_bar = None
+            if cached_data and s in cached_data:
+                d = cached_data[s]
+                if 'close' in d and len(d['close']) > 0:
+                    px = float(d['close'][-1])
+                    last_bar = {
+                        'open_time': pd.to_datetime(d['open_time'][-1]) if 'open_time' in d else pd.Timestamp.now(tz='UTC'),
+                        'open': float(d['open'][-1]),
+                        'high': float(d['high'][-1]),
+                        'low': float(d['low'][-1]),
+                        'close': px,
+                        'volume': float(d['volume'][-1]) if 'volume' in d else 1000.0,
+                        'taker_buy': float(d['taker_buy'][-1]) if 'taker_buy' in d else 500.0,
+                        'taker_sell': float(d['taker_sell'][-1]) if 'taker_sell' in d else 500.0,
+                        'tbv_ratio': 0.5
+                    }
+            if px <= 0.0:
+                for cand_dir in [Path(__file__).resolve().parent.parent, Path.cwd()]:
+                    pkl_file = cand_dir / f"{s}_2025_processed.pkl"
+                    if pkl_file.exists():
+                        try:
+                            import pickle
+                            with open(pkl_file, "rb") as pf:
+                                c_proc = pickle.load(pf)
+                            m_last = c_proc.get("2025-12") or c_proc.get(list(c_proc.keys())[-1])
+                            if m_last and 'close' in m_last and len(m_last['close']) > 0:
+                                px = float(m_last['close'][-1])
+                                last_bar = {
+                                    'open_time': pd.Timestamp.now(tz='UTC'),
+                                    'open': float(m_last['open'][-1]),
+                                    'high': float(m_last['high'][-1]),
+                                    'low': float(m_last['low'][-1]),
+                                    'close': px,
+                                    'volume': float(m_last['volume'][-1]) if 'volume' in m_last else 1000.0,
+                                    'taker_buy': 500.0,
+                                    'taker_sell': 500.0,
+                                    'tbv_ratio': 0.5
+                                }
+                                break
+                        except Exception:
+                            pass
+
+            if px <= 0.0 and s == MACRO_SYMBOL:
+                btc_p = Path("/home/atheer/Desktop/Apex_Autonomous_Agent/apex_v2/data/full_year_2025/BTCUSDT_2025-12.pkl")
+                if btc_p.exists():
+                    try:
+                        import pickle
+                        with open(btc_p, "rb") as bf:
+                            btc_df = pickle.load(bf)
+                        if len(btc_df) > 0 and 'close' in btc_df.columns:
+                            px = float(btc_df.iloc[-1]['close'])
+                            last_bar = {
+                                'open_time': pd.to_datetime(btc_df.iloc[-1]['open_time']),
+                                'open': float(btc_df.iloc[-1]['open']),
+                                'high': float(btc_df.iloc[-1]['high']),
+                                'low': float(btc_df.iloc[-1]['low']),
+                                'close': px,
+                                'volume': float(btc_df.iloc[-1]['volume']) if 'volume' in btc_df.columns else 1000.0,
+                                'taker_buy': 500.0,
+                                'taker_sell': 500.0,
+                                'tbv_ratio': 0.5
+                            }
+                    except Exception:
+                        pass
+                if px <= 0.0:
+                    px = 87650.0
+
+            if px > 0.0:
+                self.latest_prices[s] = px
+                group = "GOLDEN_11" if s in GOLDEN_11 else ("TITAN_11" if s in TITAN_11 else ("APEX_ALPHA" if s in APEX_ADDITIONS else ("APEX_35" if s in APEX_35_EXPANSION else ("APEX_38" if s in APEX_38_EXPANSION else ("APEX_51" if s in APEX_51_EXPANSION else "MACRO")))))
+                self.latest_tickers[s] = {
+                    'sym': s,
+                    'price': px,
+                    'prev_price': px,
+                    'tick_dir': 'flat',
+                    'price_change_24h': round(px * 0.0125, 4),
+                    'change_24h': 1.25,
+                    'high_24h': round(px * 1.035, 4),
+                    'low_24h': round(px * 0.965, 4),
+                    'vol_base': 50000.0,
+                    'vol_quote': round(px * 50000.0, 2),
+                    'best_bid': round(px * 0.9998, 4),
+                    'best_ask': round(px * 1.0002, 4),
+                    'spread_bps': 2.0,
+                    'group': group,
+                    'last_update': time.time()
+                }
+                if last_bar and len(self.candle_buffers[s]) == 0:
+                    self.candle_buffers[s].append(last_bar)
+
+        if MACRO_SYMBOL in self.latest_prices and self.latest_prices[MACRO_SYMBOL] > 0:
+            self.btc_24h = 1.25
+
+    def get_symbol_candles(self, symbol: str) -> List[Dict[str, Any]]:
+        """Returns recent 5m candle bars for the requested symbol from memory ring buffer or cache."""
+        sym = symbol.upper()
+        if sym in self.candle_buffers and len(self.candle_buffers[sym]) > 1:
+            out = []
+            for b in list(self.candle_buffers[sym]):
+                t_str = b['open_time'].isoformat() if hasattr(b['open_time'], 'isoformat') else str(b['open_time'])
+                out.append({
+                    'time': t_str,
+                    'open': round(float(b['open']), 6),
+                    'high': round(float(b['high']), 6),
+                    'low': round(float(b['low']), 6),
+                    'close': round(float(b['close']), 6),
+                    'volume': round(float(b.get('volume', 0.0)), 2)
+                })
+            return out
+        # Fallback to local cached data
+        for cand_dir in [Path(__file__).resolve().parent.parent, Path.cwd()]:
+            cache_path = cand_dir / "cached_compact_expanded.pkl"
+            if cache_path.exists():
+                try:
+                    import pickle
+                    with open(cache_path, "rb") as f:
+                        cached_all = pickle.load(f)
+                    m = cached_all.get("2025-12")
+                    if m and sym in m:
+                        d = m[sym]
+                        n = min(60, len(d['close']))
+                        out = []
+                        for i in range(len(d['close']) - n, len(d['close'])):
+                            t_val = d['open_time'][i] if 'open_time' in d else f"2025-12-31T{i%24:02d}:00:00Z"
+                            t_str = t_val.isoformat() if hasattr(t_val, 'isoformat') else str(t_val)
+                            out.append({
+                                'time': t_str,
+                                'open': round(float(d['open'][i]), 6),
+                                'high': round(float(d['high'][i]), 6),
+                                'low': round(float(d['low'][i]), 6),
+                                'close': round(float(d['close'][i]), 6),
+                                'volume': round(float(d['volume'][i]), 2) if 'volume' in d else 1000.0
+                            })
+                        return out
+                except Exception:
+                    pass
+        # Synthetic fallback
+        px = self.latest_prices.get(sym, 1.0) or 1.0
+        now = time.time()
+        fallback = []
+        for i in range(30):
+            t_ms = int((now - (29 - i) * 300) * 1000)
+            noise = np.sin(i / 2.5) * 0.004 * px
+            c = px + noise
+            fallback.append({
+                'time': datetime.fromtimestamp(t_ms / 1000, tz=timezone.utc).isoformat(),
+                'open': round(c * 0.999, 6),
+                'high': round(c * 1.002, 6),
+                'low': round(c * 0.998, 6),
+                'close': round(c, 6),
+                'volume': 15000.0
+            })
+        return fallback
 
     def get_total_equity(self) -> float:
         """Total portfolio equity = cash + sum(notional + unrealized gross - est exit fee)."""
@@ -256,7 +442,8 @@ class Mega22PaperBot:
         pf = (gross_wins / gross_losses) if gross_losses > 0 else 99.0
         
         tot_net = sum(t.net for t in self.trade_history)
-        roe = (tot_net / INITIAL_CAPITAL) * 100.0
+        init_cap = getattr(self, 'initial_capital', INITIAL_CAPITAL)
+        roe = (tot_net / init_cap) * 100.0
         win_rate = (len(wins) / total_trades) * 100.0
         avg_trade = tot_net / total_trades
         best_pnl = max(t.pnl_pct for t in self.trade_history)
@@ -295,8 +482,8 @@ class Mega22PaperBot:
         sharpe = float((np.mean(pnl_pcts) / std_pnl) * annual_factor) if std_pnl > 1e-6 else 0.0
 
         # Trade-level closed-equity drawdown
-        cum_equity = [INITIAL_CAPITAL]
-        eq = INITIAL_CAPITAL
+        cum_equity = [init_cap]
+        eq = init_cap
         for t in self.trade_history:
             eq += t.net
             cum_equity.append(eq)
@@ -554,7 +741,7 @@ class Mega22PaperBot:
         a = float(data.get('a', c))
         spread_bps = ((a - b) / c * 10000.0) if c > 0 else 0.0
 
-        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else ("APEX_ALPHA" if symbol in APEX_ADDITIONS else ("APEX_35" if symbol in APEX_35_EXPANSION else ("APEX_38" if symbol in APEX_38_EXPANSION else "MACRO"))))
+        group = "GOLDEN_11" if symbol in GOLDEN_11 else ("TITAN_11" if symbol in TITAN_11 else ("APEX_ALPHA" if symbol in APEX_ADDITIONS else ("APEX_35" if symbol in APEX_35_EXPANSION else ("APEX_38" if symbol in APEX_38_EXPANSION else ("APEX_51" if symbol in APEX_51_EXPANSION else "MACRO")))))
 
 
         self.latest_tickers[symbol] = {
@@ -593,8 +780,9 @@ class Mega22PaperBot:
         # Broadcast tick event for instantaneous UI flash & floating PnL update
         pos_d = self.active_positions[symbol].to_dict() if symbol in self.active_positions else None
         equity = self.get_total_equity()
-        total_pnl = equity - INITIAL_CAPITAL
-        roe_pct = (total_pnl / INITIAL_CAPITAL) * 100.0
+        init_cap = getattr(self, 'initial_capital', INITIAL_CAPITAL)
+        total_pnl = equity - init_cap
+        roe_pct = (total_pnl / init_cap) * 100.0
         tick_payload = {
             "sym": symbol,
             "price": c,
@@ -638,7 +826,8 @@ class Mega22PaperBot:
             
             # Explicit real-time price boundary enforcement (SL, TP, and dynamic profit lock / trailing ratchet)
             stop_price = updated_pos.px * (1.0 - updated_pos.stop)
-            tp_price = updated_pos.px * (1.0 + TAKE_PROFIT_TARGET)
+            tp_target = TAKE_PROFIT_HIGH_ALPHA if getattr(updated_pos, 'score', 0.0) >= HIGH_ALPHA_SCORE_THRESHOLD else TAKE_PROFIT_BASE
+            tp_price = updated_pos.px * (1.0 + tp_target)
 
             if updated_pos.stop < prev_stop and updated_pos.stop <= 0:
                 pct = abs(updated_pos.stop) * 100.0
@@ -873,7 +1062,7 @@ class Mega22PaperBot:
         # If at max capacity and a high-conviction candidate emerges (score >= ROTATION_MIN_SCORE),
         # evict stagnant position (held >= ROTATION_FAST_HELD_BARS with negative kinetic acceleration d^2P/dt^2 <= 0,
         # or held >= ROTATION_HELD_BARS standard).
-        if ENABLE_OPPORTUNITY_ROTATION and len(self.active_positions) >= MAX_SLOTS and len(cands) > 0:
+        if ENABLE_OPPORTUNITY_ROTATION and len(self.active_positions) >= self.max_slots and len(cands) > 0:
             histories = {s: p.recent_prices for s, p in self.active_positions.items()}
             evict_res = Mega22StrategyEngine.select_rotation_eviction(
                 active_positions=self.active_positions,
@@ -895,18 +1084,20 @@ class Mega22PaperBot:
                 )
                 self._execute_position_close(sym_evict, exit_px, reason)
 
-        if len(self.active_positions) >= MAX_SLOTS:
+        if len(self.active_positions) >= self.max_slots:
             return
 
-        avail_slots = MAX_SLOTS - len(self.active_positions)
+        avail_slots = self.max_slots - len(self.active_positions)
         valid_cands = [c for c in cands if c[0] not in self.active_positions]
 
         for sym, score, raw_px in valid_cands[:avail_slots]:
-            # Institutional Equal-Equity Slot Sizing: allocates 33.3% of current portfolio total equity
+            # Institutional Equal-Equity Slot Sizing with Dynamic Sub-$15 Protection:
             total_equity = self.available_cash + sum(p.notional for p in self.active_positions.values())
-            target_notional = min(total_equity * SLOT_FRACTION, self.available_cash / (1.0 + FEE_RATE))
+            target_notional = min(total_equity * self.slot_fraction, self.available_cash / (1.0 + FEE_RATE))
+            if target_notional < 5.00 and self.available_cash >= 5.00 * (1.0 + FEE_RATE):
+                target_notional = min(self.available_cash / (1.0 + FEE_RATE), 5.00)
 
-            if self.available_cash >= target_notional and target_notional > 50.0:
+            if self.available_cash >= target_notional and target_notional >= 5.00:
                 epx = raw_px * (1.0 + SLIPPAGE_RATE)
                 ef = target_notional * FEE_RATE
                 self.available_cash = max(0.0, round(self.available_cash - (target_notional + ef), 6))
@@ -942,10 +1133,14 @@ class Mega22PaperBot:
             return True
         return False
 
-    def reset_portfolio(self, capital: float = INITIAL_CAPITAL):
+    def reset_portfolio(self, capital: float = INITIAL_CAPITAL, max_slots: Optional[int] = None):
         """Reset paper trading state to initial capital."""
+        self.initial_capital = capital
         self.capital = capital
         self.available_cash = capital
+        if max_slots is not None:
+            self.max_slots = max_slots
+            self.slot_fraction = 0.98 if self.max_slots == 1 else (1.0 / self.max_slots)
         self.bar_index = 0
         self.active_positions.clear()
         self.trade_history.clear()
@@ -958,9 +1153,9 @@ class Mega22PaperBot:
         for task in self._pending_debounce_tasks.values():
             task.cancel()
         self._pending_debounce_tasks.clear()
-        self.log_event(f"🔄 Portfolio Reset: Capital initialized to ${capital:.2f}")
+        self.log_event(f"🔄 Portfolio Reset: Capital initialized to ${capital:.2f} (Slots: {self.max_slots})")
         self._save_journal()
-        self._broadcast("reset", {"capital": capital})
+        self._broadcast("reset", {"capital": capital, "max_slots": self.max_slots})
 
     async def run(self):
         """
@@ -1058,7 +1253,7 @@ class Mega22PaperBot:
             )
             leaderboard.append({
                 "sym": sym,
-                "group": "GOLDEN_11" if sym in GOLDEN_11 else ("TITAN_11" if sym in TITAN_11 else ("APEX_ALPHA" if sym in APEX_ADDITIONS else ("APEX_35" if sym in APEX_35_EXPANSION else "APEX_38"))),
+                "group": "GOLDEN_11" if sym in GOLDEN_11 else ("TITAN_11" if sym in TITAN_11 else ("APEX_ALPHA" if sym in APEX_ADDITIONS else ("APEX_35" if sym in APEX_35_EXPANSION else ("APEX_38" if sym in APEX_38_EXPANSION else ("APEX_51" if sym in APEX_51_EXPANSION else "MACRO"))))),
                 "price": px,
 
                 "change_24h": ticker.get('change_24h', 0.0),
@@ -1081,15 +1276,32 @@ class Mega22PaperBot:
         leaderboard.sort(key=lambda x: x['score'], reverse=True)
         
         unrealized = sum(p.unrealized_pnl for p in self.active_positions.values())
-        total_pnl = equity - INITIAL_CAPITAL
-        total_roe = (total_pnl / INITIAL_CAPITAL) * 100.0
+        init_cap = getattr(self, 'initial_capital', INITIAL_CAPITAL)
+        total_pnl = equity - init_cap
+        total_roe = (total_pnl / init_cap) * 100.0
         
+        peak_equity = max([init_cap] + [t.cap_after for t in self.trade_history] + [equity])
+        current_dd_pct = round(max(0.0, (peak_equity - equity) / peak_equity * 100.0), 2) if peak_equity > 0 else 0.0
+        if current_dd_pct <= 2.0:
+            throttle = {"stage": "100%", "level": "FULL_RISK", "multiplier": 1.0, "color": "#43e6a1"}
+        elif current_dd_pct <= 3.0:
+            throttle = {"stage": "50%", "level": "HALF_RISK", "multiplier": 0.5, "color": "#f5b942"}
+        elif current_dd_pct <= 4.0:
+            throttle = {"stage": "25%", "level": "QUARTER_RISK", "multiplier": 0.25, "color": "#ff8b4d"}
+        elif current_dd_pct <= 5.0:
+            throttle = {"stage": "0%", "level": "HALT_ENTRIES", "multiplier": 0.0, "color": "#ff5277"}
+        else:
+            throttle = {"stage": "KILL", "level": "EMERGENCY_KILL", "multiplier": 0.0, "color": "#ffffff"}
+
         return {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "server_time_ms": int(time.time() * 1000),
             "bar_index": self.bar_index,
             "is_paused": self.is_paused,
             "equity": round(equity, 2),
+            "peak_equity": round(peak_equity, 2),
+            "current_dd_pct": current_dd_pct,
+            "drawdown_throttle": throttle,
             "available_cash": round(self.available_cash, 2),
             "unrealized_pnl": round(unrealized, 2),
             "total_pnl": round(total_pnl, 2),
@@ -1119,7 +1331,8 @@ class Mega22PaperBot:
             "best_trade_pnl": stats['best_trade_pnl'],
             "worst_trade_pnl": stats['worst_trade_pnl'],
             "last_trade": stats['last_trade'],
-            "max_slots": MAX_SLOTS,
+            "max_slots": self.max_slots,
+            "slot_fraction": round(self.slot_fraction, 3),
             "used_slots": len(self.active_positions),
             "btc_hawkes": round(self.btc_hawkes, 4),
             "btc_hawkes_history": list(self.btc_hawkes_history),
@@ -1137,6 +1350,8 @@ class Mega22PaperBot:
             "apex_35": APEX_35,
             "apex_38_expansion": APEX_38_EXPANSION,
             "apex_38": APEX_38,
+            "apex_51_expansion": APEX_51_EXPANSION,
+            "apex_51": APEX_51,
             "active_universe": ACTIVE_UNIVERSE,
 
             "global_guard_active": self.bar_index <= self.stoploss_guard_until,
